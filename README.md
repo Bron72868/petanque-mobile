@@ -108,6 +108,41 @@ physics/rendering/UI/AI in one `<script>` block. No build step.
   `selectedSkin`, `completedTournaments`) have a migration in `loadProfile()`
   for profiles saved before this existed.
 
+- **Online lobby system (Firebase).** The "Online" button now leads to a real
+  backend instead of a stub. Free-tier **Firebase** (Firestore + Anonymous
+  Auth, no Cloud Functions/billing plan required) powers **Quick Play**
+  (auto-match into an open public lobby or host a new one), **Create Lobby**
+  (pick a format, public/private), **Join with Code** (a 6-character
+  human-readable code, e.g. `X9JXHK`), and a **Leaderboard** (win/loss record
+  per player, stored in a `leaderboard/{uid}` collection). The lobby room
+  (`step-online-lobby`) shows every slot for both teams live via a Firestore
+  `onSnapshot` listener — the host can fill open slots with bots (any
+  difficulty), kick players, or remove bots, and everyone in the lobby sees
+  changes instantly, no refresh needed. See the `Online` namespace (Firestore
+  wrapper: `createLobby`/`joinLobbyByCode`/`quickPlay`/`listenToLobby`/
+  `setSlotBot`/`clearSlot`/`leaveLobby`/`fetchLeaderboard`) and
+  `renderLobbyRoom()`/`enterLobby()` for the UI side, both right before the
+  `el.offlineBtn` wiring block.
+  **What this does *not* do yet:** tapping "Start match" in a full lobby
+  shows a "coming soon" toast rather than actually starting a synced match.
+  The lobby/matchmaking layer is fully real and tested (two browser tabs each
+  see the other's live slot changes), but wiring an actual two-device match —
+  where a remote human's throw plays out on your screen — means touching the
+  core turn engine (`advanceTurn`, `beginJackThrow`, the aiming-phase gating
+  on `state.currentTeam`/slot type) across many call sites, since the whole
+  physics/turn state machine currently assumes one device drives both teams.
+  That's the next chunk of work. Variable-timestep physics
+  (`dt = Math.min(0.033, (now-last)/1000)`) means the two devices *can't*
+  just replay the same inputs and expect identical results — the plan is to
+  have only the throwing client run the real physics, then broadcast the
+  boules' final resting positions for the other client to animate toward,
+  not a deterministic re-simulation.
+  Firestore security rules (published in the Firebase console, not in this
+  repo) require auth but don't check `hostUid` server-side — there's no
+  server code to enforce that on this plan, so a determined user could in
+  theory edit someone else's lobby by guessing its code. Acceptable for a
+  hobby-scale game; revisit if this ever needs to be abuse-resistant.
+
 ## ⚠️ Gotcha: the service worker caches `index.html`
 
 Once installed, the service worker (`service-worker.js`) serves `index.html`
@@ -162,9 +197,13 @@ right.
 
 ## Known gaps (carried over from the original prototype)
 
-- **No real online multiplayer** — the "Online" button is a UI stub; tapping
-  it just shows a toast. `state.currentMatchIsOnline` exists so that real
-  matchmaking can be wired in later without touching stat-bucketing.
+- **No live synced online matches yet** — the lobby/matchmaking system (Quick
+  Play, Create/Join by code, teams, bots, live-updating lobby room,
+  leaderboard) is real and working end-to-end; "Start match" just shows a
+  "coming soon" toast rather than launching an actual two-device match. See
+  the online lobby section above for why this is the harder remaining piece.
+  `state.currentMatchIsOnline` exists so that real matchmaking can be wired
+  in later without touching stat-bucketing.
 - **Boule customization** (diameter/weight) — noted as a TODO, never
   implemented.
 - See the physics/rules notes below if you're touching game logic, not just

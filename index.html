@@ -538,6 +538,31 @@
   .bracket-round-sub{ font-size:11px; opacity:0.7; }
   .bracket-round-status{ margin-left:auto; font-size:16px; }
 
+  .lobby-code-display{
+    font-family: var(--font-ui); font-weight:800; font-size:34px; letter-spacing:0.14em;
+    text-align:center; background: rgba(46,42,34,0.06); border:2px dashed var(--panel-border);
+    border-radius:12px; padding:14px; margin:10px 0 14px; cursor:pointer; user-select:all;
+  }
+  .lobby-code-display.copied{ border-color: var(--good); color: var(--good); border-style:solid; }
+  .lobby-slot-badge{
+    font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em;
+    padding:2px 6px; border-radius:5px; background: rgba(46,42,34,0.1); flex:none;
+  }
+  .lobby-slot-badge.host{ background: var(--terracotta); color:#fff8ee; }
+  .lobby-slot-btn{
+    appearance:none; border:1px solid var(--panel-border); cursor:pointer;
+    background: rgba(46,42,34,0.05); color: var(--paper-ink);
+    font-family: var(--font-ui); font-weight:600; font-size:10px;
+    padding:5px 8px; border-radius:6px; flex:none;
+  }
+  .leaderboard-row{
+    display:flex; align-items:center; gap:8px;
+    background: rgba(46,42,34,0.05); border-radius:9px; padding:8px 10px; margin-bottom:6px;
+  }
+  .leaderboard-rank{ font-weight:800; font-size:13px; width:22px; flex:none; opacity:0.7; }
+  .leaderboard-name{ flex:1; font-weight:700; font-size:13px; }
+  .leaderboard-stat{ font-size:11px; opacity:0.7; }
+
   .skin-grid{ display:flex; flex-direction:column; gap:8px; }
   .skin-card{
     display:flex; align-items:center; gap:10px; text-align:left;
@@ -915,6 +940,60 @@
       <button class="primary-btn" id="tournament-start-btn" style="margin-top:16px;">Start</button>
     </div>
 
+    <div class="menu-step" id="step-online-home">
+      <button class="back-link-btn" id="online-home-back-btn">← Back</button>
+      <h1 class="title-screen-h1" style="font-size:28px;">Online</h1>
+      <button class="primary-btn" id="online-quickplay-btn">Quick Play</button>
+      <button class="primary-btn secondary-btn" id="online-create-btn">Create Lobby</button>
+      <button class="primary-btn secondary-btn" id="online-join-btn">Join with Code</button>
+      <button class="primary-btn secondary-btn" id="online-leaderboard-btn">Leaderboard</button>
+    </div>
+
+    <div class="menu-step" id="step-online-create">
+      <button class="back-link-btn" id="online-create-back-btn">← Back</button>
+      <h1 class="rules-h1">Create a lobby</h1>
+      <div class="rules" style="margin-bottom:8px;"><b>Format</b></div>
+      <div class="option-grid" id="online-format-grid" style="grid-template-columns:1fr 1fr 1fr;"></div>
+      <div class="toggle-row" style="margin-top:4px;">
+        <label class="toggle-switch">
+          <input type="checkbox" id="online-public-checkbox" checked>
+          <span class="toggle-slider"></span>
+        </label>
+        <span class="toggle-label">Public — let Quick Play find this lobby</span>
+      </div>
+      <button class="primary-btn" id="online-create-confirm-btn" style="margin-top:14px;">Create</button>
+    </div>
+
+    <div class="menu-step" id="step-online-join">
+      <button class="back-link-btn" id="online-join-back-btn">← Back</button>
+      <h1 class="rules-h1">Join with code</h1>
+      <p class="tag">Ask your opponent for their 6-character lobby code.</p>
+      <input type="text" class="slot-name-input" id="online-join-code-input" placeholder="ABC123" maxlength="6" style="width:100%; box-sizing:border-box; margin-bottom:12px; padding:12px; font-size:20px; letter-spacing:0.15em; text-align:center; text-transform:uppercase;">
+      <button class="primary-btn" id="online-join-confirm-btn">Join</button>
+    </div>
+
+    <div class="menu-step" id="step-online-lobby">
+      <button class="back-link-btn" id="online-lobby-leave-btn">← Leave lobby</button>
+      <h1 class="rules-h1">Lobby</h1>
+      <div class="lobby-code-display" id="online-lobby-code-display">------</div>
+      <p class="tag" id="online-lobby-status-tag">Waiting for players…</p>
+      <div class="team-block">
+        <div class="team-block-title">Team 1</div>
+        <div id="online-lobby-team-a"></div>
+      </div>
+      <div class="team-block">
+        <div class="team-block-title">Team 2</div>
+        <div id="online-lobby-team-b"></div>
+      </div>
+      <button class="primary-btn" id="online-lobby-start-btn" style="display:none;">Start match</button>
+    </div>
+
+    <div class="menu-step" id="step-online-leaderboard">
+      <button class="back-link-btn" id="online-leaderboard-back-btn">← Back</button>
+      <h1 class="rules-h1">Leaderboard</h1>
+      <div id="online-leaderboard-list"></div>
+    </div>
+
   </div>
 </div>
 
@@ -937,6 +1016,9 @@
 
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
 <script>
 // ---------- Real viewport height (mobile browsers' 100vh can be taller than what's actually visible) ----------
 function setAppHeight(){
@@ -2796,6 +2878,31 @@ function bootGame(){
     tournamentStartBtn: document.getElementById('tournament-start-btn'),
     offlineBtn: document.getElementById('offline-btn'),
     onlineBtn: document.getElementById('online-btn'),
+    stepOnlineHome: document.getElementById('step-online-home'),
+    onlineHomeBackBtn: document.getElementById('online-home-back-btn'),
+    onlineQuickplayBtn: document.getElementById('online-quickplay-btn'),
+    onlineCreateBtn: document.getElementById('online-create-btn'),
+    onlineJoinBtn: document.getElementById('online-join-btn'),
+    onlineLeaderboardBtn: document.getElementById('online-leaderboard-btn'),
+    stepOnlineCreate: document.getElementById('step-online-create'),
+    onlineCreateBackBtn: document.getElementById('online-create-back-btn'),
+    onlineFormatGrid: document.getElementById('online-format-grid'),
+    onlinePublicCheckbox: document.getElementById('online-public-checkbox'),
+    onlineCreateConfirmBtn: document.getElementById('online-create-confirm-btn'),
+    stepOnlineJoin: document.getElementById('step-online-join'),
+    onlineJoinBackBtn: document.getElementById('online-join-back-btn'),
+    onlineJoinCodeInput: document.getElementById('online-join-code-input'),
+    onlineJoinConfirmBtn: document.getElementById('online-join-confirm-btn'),
+    stepOnlineLobby: document.getElementById('step-online-lobby'),
+    onlineLobbyLeaveBtn: document.getElementById('online-lobby-leave-btn'),
+    onlineLobbyCodeDisplay: document.getElementById('online-lobby-code-display'),
+    onlineLobbyStatusTag: document.getElementById('online-lobby-status-tag'),
+    onlineLobbyTeamA: document.getElementById('online-lobby-team-a'),
+    onlineLobbyTeamB: document.getElementById('online-lobby-team-b'),
+    onlineLobbyStartBtn: document.getElementById('online-lobby-start-btn'),
+    stepOnlineLeaderboard: document.getElementById('step-online-leaderboard'),
+    onlineLeaderboardBackBtn: document.getElementById('online-leaderboard-back-btn'),
+    onlineLeaderboardList: document.getElementById('online-leaderboard-list'),
     tutorialBtn: document.getElementById('tutorial-btn'),
     howtoToggle: document.getElementById('howto-toggle'),
     howtoContent: document.getElementById('howto-content'),
@@ -2848,7 +2955,7 @@ function bootGame(){
 
   // ---------- Menu flow: difficulty -> coin toss -> terrain pick ----------
   function showMenuStep(id){
-    [el.stepTitle, el.stepProfile, el.stepTutorial, el.stepRules, el.stepOfflineChoice, el.stepSetup, el.stepTossChoice, el.stepTossCall, el.stepToss, el.stepTerrain, el.stepTournaments, el.stepTournamentDetail].forEach(function(s){ s.classList.remove('active'); });
+    [el.stepTitle, el.stepProfile, el.stepTutorial, el.stepRules, el.stepOfflineChoice, el.stepSetup, el.stepTossChoice, el.stepTossCall, el.stepToss, el.stepTerrain, el.stepTournaments, el.stepTournamentDetail, el.stepOnlineHome, el.stepOnlineCreate, el.stepOnlineJoin, el.stepOnlineLobby, el.stepOnlineLeaderboard].forEach(function(s){ s.classList.remove('active'); });
     document.getElementById(id).classList.add('active');
   }
 
@@ -5223,6 +5330,407 @@ function bootGame(){
   el.throwBtn.addEventListener('click', function(){ playClick(); doThrow(); });
   el.lockBackBtn.addEventListener('click', function(){ playClick(); cancelLock(); });
 
+  // ---------- Online multiplayer: Firebase-backed lobby system ----------
+  // Free (Spark) plan — no Cloud Functions. All matchmaking/lobby logic is plain
+  // client-side Firestore reads/writes/transactions. Security rules (published in
+  // the Firebase console) require auth but don't restrict lobby writes to the host,
+  // since there's no server code to enforce that — fine for a hobby-scale game.
+  var firebaseConfig = {
+    apiKey: "AIzaSyAS6Px0JNmptwMQI0QFm_JpuqNlPQsX8ow",
+    authDomain: "petanque-mobile.firebaseapp.com",
+    projectId: "petanque-mobile",
+    storageBucket: "petanque-mobile.firebasestorage.app",
+    messagingSenderId: "369066095869",
+    appId: "1:369066095869:web:e774eb4926cf6476127a94"
+  };
+  var Online = (function(){
+    var app = null, db = null, auth = null, uid = null, authReady = null;
+    var unsubLobby = null;
+    var LOBBY_CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I — avoids ambiguity when read aloud/typed
+
+    function init(){
+      if(authReady) return authReady;
+      try{
+        app = firebase.initializeApp(firebaseConfig);
+        db = firebase.firestore();
+        auth = firebase.auth();
+        authReady = new Promise(function(resolve){
+          auth.onAuthStateChanged(function(user){
+            if(user){ uid = user.uid; resolve(uid); }
+          });
+          auth.signInAnonymously().catch(function(err){ console.error('Anonymous sign-in failed', err); resolve(null); });
+        });
+      } catch(err){
+        console.error('Firebase init failed', err);
+        authReady = Promise.resolve(null);
+      }
+      return authReady;
+    }
+    function makeCode(){
+      var s = '';
+      for(var i=0;i<6;i++) s += LOBBY_CODE_CHARS[Math.floor(Math.random()*LOBBY_CODE_CHARS.length)];
+      return s;
+    }
+    function emptySlots(formatIdx){
+      var n = FORMATS[formatIdx].playersPerTeam;
+      var slots = [];
+      for(var i=0;i<n;i++) slots.push({ team:'A', slotIdx:i, type:'empty', uid:null, name:'', difficulty:null });
+      for(var i=0;i<n;i++) slots.push({ team:'B', slotIdx:i, type:'empty', uid:null, name:'', difficulty:null });
+      return slots;
+    }
+    function createLobby(formatIdx, isPublic){
+      return init().then(function(myUid){
+        if(!myUid) return Promise.reject(new Error('Not signed in — check your connection'));
+        var name = (state.profile && state.profile.name) || 'Player';
+        var slots = emptySlots(formatIdx);
+        slots[0] = { team:'A', slotIdx:0, type:'human', uid:myUid, name:name, difficulty:null };
+        function tryCreate(attemptsLeft){
+          var code = makeCode();
+          var ref = db.collection('lobbies').doc(code);
+          return ref.get().then(function(snap){
+            if(snap.exists){
+              if(attemptsLeft <= 0) return Promise.reject(new Error('Could not allocate a lobby code — try again'));
+              return tryCreate(attemptsLeft-1);
+            }
+            return ref.set({
+              code: code, hostUid: myUid, formatIdx: formatIdx, isPublic: !!isPublic,
+              status: 'waiting', terrainIdx: 0, sceneryIdx: 0, slots: slots,
+              createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+              updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            }).then(function(){ return code; });
+          });
+        }
+        return tryCreate(5);
+      });
+    }
+    function joinLobbyByCode(code){
+      code = (code||'').trim().toUpperCase();
+      return init().then(function(myUid){
+        if(!myUid) return Promise.reject(new Error('Not signed in — check your connection'));
+        if(!code) return Promise.reject(new Error('Enter a code first'));
+        var ref = db.collection('lobbies').doc(code);
+        var name = (state.profile && state.profile.name) || 'Player';
+        return db.runTransaction(function(tx){
+          return tx.get(ref).then(function(snap){
+            if(!snap.exists) throw new Error('No lobby with that code');
+            var data = snap.data();
+            if(data.status !== 'waiting') throw new Error('That lobby already started');
+            var slots = data.slots.slice();
+            if(slots.some(function(s){ return s.uid === myUid; })) return code;
+            var idx = -1;
+            for(var i=0;i<slots.length;i++){ if(slots[i].type === 'empty'){ idx = i; break; } }
+            if(idx === -1) throw new Error('That lobby is full');
+            slots[idx] = { team: slots[idx].team, slotIdx: slots[idx].slotIdx, type:'human', uid: myUid, name: name, difficulty: null };
+            tx.update(ref, { slots: slots, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+            return code;
+          });
+        });
+      });
+    }
+    function quickPlay(formatIdx){
+      return init().then(function(myUid){
+        if(!myUid) return Promise.reject(new Error('Not signed in — check your connection'));
+        return db.collection('lobbies')
+          .where('isPublic','==', true).where('status','==','waiting').where('formatIdx','==', formatIdx)
+          .limit(10).get()
+          .then(function(qs){
+            var candidate = null;
+            qs.forEach(function(doc){
+              if(candidate) return;
+              var data = doc.data();
+              if(data.hostUid === myUid) return;
+              if(data.slots.some(function(s){ return s.type==='empty'; })) candidate = doc.id;
+            });
+            if(candidate) return joinLobbyByCode(candidate);
+            return createLobby(formatIdx, true);
+          })
+          .catch(function(err){
+            console.error('Quick play search failed, hosting a new lobby instead', err);
+            return createLobby(formatIdx, true);
+          });
+      });
+    }
+    function listenToLobby(lobbyId, cb){
+      stopListening();
+      unsubLobby = db.collection('lobbies').doc(lobbyId).onSnapshot(function(snap){
+        if(!snap.exists){ cb(null); return; }
+        var data = snap.data();
+        data.id = snap.id;
+        cb(data);
+      }, function(err){ console.error('Lobby listen error', err); });
+    }
+    function stopListening(){
+      if(unsubLobby){ unsubLobby(); unsubLobby = null; }
+    }
+    function mutateSlots(lobbyId, mutator){
+      var ref = db.collection('lobbies').doc(lobbyId);
+      return db.runTransaction(function(tx){
+        return tx.get(ref).then(function(snap){
+          if(!snap.exists) throw new Error('Lobby no longer exists');
+          var data = snap.data();
+          var slots = mutator(data.slots.slice(), data);
+          tx.update(ref, { slots: slots, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+        });
+      });
+    }
+    function setSlotBot(lobbyId, team, slotIdx, difficulty){
+      return mutateSlots(lobbyId, function(slots){
+        return slots.map(function(s){
+          if(s.team===team && s.slotIdx===slotIdx) return { team:team, slotIdx:slotIdx, type:'bot', uid:null, name:'Bot', difficulty: difficulty };
+          return s;
+        });
+      });
+    }
+    function clearSlot(lobbyId, team, slotIdx){
+      return mutateSlots(lobbyId, function(slots){
+        return slots.map(function(s){
+          if(s.team===team && s.slotIdx===slotIdx) return { team:team, slotIdx:slotIdx, type:'empty', uid:null, name:'', difficulty:null };
+          return s;
+        });
+      });
+    }
+    function leaveLobby(lobbyId){
+      if(!lobbyId) return Promise.resolve();
+      var myUid = uid;
+      var ref = db.collection('lobbies').doc(lobbyId);
+      return db.runTransaction(function(tx){
+        return tx.get(ref).then(function(snap){
+          if(!snap.exists) return;
+          var data = snap.data();
+          var humanSlots = data.slots.filter(function(s){ return s.type==='human'; });
+          var iAmOnlyHuman = humanSlots.length <= 1 && humanSlots.some(function(s){ return s.uid===myUid; });
+          if(iAmOnlyHuman){ tx.delete(ref); return; }
+          var slots = data.slots.map(function(s){
+            if(s.uid === myUid) return { team:s.team, slotIdx:s.slotIdx, type:'empty', uid:null, name:'', difficulty:null };
+            return s;
+          });
+          var newHost = data.hostUid;
+          if(data.hostUid === myUid){
+            var nextHuman = slots.filter(function(s){ return s.type==='human'; })[0];
+            newHost = nextHuman ? nextHuman.uid : data.hostUid;
+          }
+          tx.update(ref, { slots: slots, hostUid: newHost, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+        });
+      }).then(function(){ stopListening(); });
+    }
+    function fetchLeaderboard(n){
+      return init().then(function(){
+        return db.collection('leaderboard').orderBy('wins','desc').limit(n||20).get().then(function(qs){
+          var rows = [];
+          qs.forEach(function(doc){ rows.push(doc.data()); });
+          return rows;
+        });
+      });
+    }
+    return {
+      init: init, getUid: function(){ return uid; },
+      createLobby: createLobby, joinLobbyByCode: joinLobbyByCode, quickPlay: quickPlay,
+      listenToLobby: listenToLobby, stopListening: stopListening,
+      setSlotBot: setSlotBot, clearSlot: clearSlot, leaveLobby: leaveLobby,
+      fetchLeaderboard: fetchLeaderboard
+    };
+  })();
+
+  var currentLobbyId = null, currentLobbyData = null;
+
+  function exitOnlineLobby(showHome){
+    Online.leaveLobby(currentLobbyId);
+    currentLobbyId = null; currentLobbyData = null;
+    if(showHome) showMenuStep('step-online-home');
+  }
+
+  function enterLobby(lobbyId){
+    currentLobbyId = lobbyId;
+    showToast('Connected — code ' + lobbyId);
+    showMenuStep('step-online-lobby');
+    Online.listenToLobby(lobbyId, function(data){
+      if(!data){
+        showToast('Lobby closed');
+        currentLobbyId = null; currentLobbyData = null;
+        if(document.getElementById('step-online-lobby').classList.contains('active')) showMenuStep('step-online-home');
+        return;
+      }
+      currentLobbyData = data;
+      renderLobbyRoom();
+    });
+  }
+
+  function renderLobbyRoom(){
+    var data = currentLobbyData;
+    if(!data) return;
+    var myUid = Online.getUid();
+    var isHost = data.hostUid === myUid;
+    el.onlineLobbyCodeDisplay.textContent = data.code;
+    el.onlineLobbyStatusTag.textContent = isHost
+      ? 'You’re the host — share this code, assign bots, then start.'
+      : 'Waiting for the host to start the match…';
+
+    function renderTeam(container, team){
+      container.innerHTML = '';
+      data.slots.filter(function(s){ return s.team===team; }).forEach(function(slot){
+        var row = document.createElement('div');
+        row.className = 'player-slot';
+        var label = document.createElement('span');
+        label.className = 'slot-num';
+        label.textContent = team + (slot.slotIdx+1);
+        row.appendChild(label);
+        var info = document.createElement('span');
+        info.style.flex = '1';
+        info.style.fontSize = '12px';
+        info.style.fontWeight = '600';
+        if(slot.type === 'human'){
+          info.textContent = slot.name || 'Player';
+          row.appendChild(info);
+          if(slot.uid === data.hostUid){
+            var hb = document.createElement('span'); hb.className='lobby-slot-badge host'; hb.textContent='Host'; row.appendChild(hb);
+          }
+          if(slot.uid === myUid){
+            var yb = document.createElement('span'); yb.className='lobby-slot-badge'; yb.textContent='You'; row.appendChild(yb);
+          } else if(isHost){
+            var kick = document.createElement('button');
+            kick.className = 'lobby-slot-btn'; kick.textContent = 'Kick';
+            kick.addEventListener('click', function(){
+              playClick();
+              Online.clearSlot(currentLobbyId, slot.team, slot.slotIdx).catch(function(err){ showToast(err.message); });
+            });
+            row.appendChild(kick);
+          }
+        } else if(slot.type === 'bot'){
+          info.textContent = 'Bot — ' + AI_LEVELS[slot.difficulty || 0].label;
+          row.appendChild(info);
+          if(isHost){
+            var cycle = document.createElement('button');
+            cycle.className = 'lobby-slot-btn'; cycle.textContent = 'Difficulty';
+            cycle.addEventListener('click', function(){
+              playClick();
+              var next = ((slot.difficulty||0) + 1) % AI_LEVELS.length;
+              Online.setSlotBot(currentLobbyId, slot.team, slot.slotIdx, next).catch(function(err){ showToast(err.message); });
+            });
+            row.appendChild(cycle);
+            var remove = document.createElement('button');
+            remove.className = 'lobby-slot-btn'; remove.textContent = 'Remove';
+            remove.addEventListener('click', function(){
+              playClick();
+              Online.clearSlot(currentLobbyId, slot.team, slot.slotIdx).catch(function(err){ showToast(err.message); });
+            });
+            row.appendChild(remove);
+          }
+        } else {
+          info.textContent = 'Open slot'; info.style.opacity = '0.6';
+          row.appendChild(info);
+          if(isHost){
+            var addBot = document.createElement('button');
+            addBot.className = 'lobby-slot-btn'; addBot.textContent = 'Add bot';
+            addBot.addEventListener('click', function(){
+              playClick();
+              Online.setSlotBot(currentLobbyId, slot.team, slot.slotIdx, 1).catch(function(err){ showToast(err.message); });
+            });
+            row.appendChild(addBot);
+          }
+        }
+        container.appendChild(row);
+      });
+    }
+    renderTeam(el.onlineLobbyTeamA, 'A');
+    renderTeam(el.onlineLobbyTeamB, 'B');
+
+    var anyEmpty = data.slots.some(function(s){ return s.type==='empty'; });
+    if(isHost){
+      el.onlineLobbyStartBtn.style.display = 'block';
+      el.onlineLobbyStartBtn.disabled = anyEmpty;
+      el.onlineLobbyStartBtn.textContent = anyEmpty ? 'Fill every slot to start' : 'Start match';
+    } else {
+      el.onlineLobbyStartBtn.style.display = 'none';
+    }
+  }
+
+  function renderOnlineFormatGrid(){
+    el.onlineFormatGrid.innerHTML = '';
+    FORMATS.forEach(function(f, idx){
+      var btn = document.createElement('button');
+      btn.className = 'option-card' + (idx === (state.onlineFormatIdx||0) ? ' selected' : '');
+      btn.innerHTML = '<div class="opt-title">'+f.label+'</div><div class="opt-desc">'+f.desc+'</div>';
+      btn.addEventListener('click', function(){
+        playClick();
+        state.onlineFormatIdx = idx;
+        renderOnlineFormatGrid();
+      });
+      el.onlineFormatGrid.appendChild(btn);
+    });
+  }
+
+  el.onlineHomeBackBtn.addEventListener('click', function(){ playClick(); showMenuStep('step-title'); });
+  el.onlineQuickplayBtn.addEventListener('click', function(){
+    playClick();
+    showToast('Finding a match…');
+    Online.quickPlay(state.onlineFormatIdx || 0).then(function(code){
+      enterLobby(code);
+    }).catch(function(err){ showToast(err.message || 'Could not start quick play'); });
+  });
+  el.onlineCreateBtn.addEventListener('click', function(){
+    playClick();
+    renderOnlineFormatGrid();
+    showMenuStep('step-online-create');
+  });
+  el.onlineCreateBackBtn.addEventListener('click', function(){ playClick(); showMenuStep('step-online-home'); });
+  el.onlineCreateConfirmBtn.addEventListener('click', function(){
+    playClick();
+    Online.createLobby(state.onlineFormatIdx || 0, el.onlinePublicCheckbox.checked).then(function(code){
+      enterLobby(code);
+    }).catch(function(err){ showToast(err.message || 'Could not create a lobby'); });
+  });
+  el.onlineJoinBtn.addEventListener('click', function(){
+    playClick();
+    el.onlineJoinCodeInput.value = '';
+    showMenuStep('step-online-join');
+  });
+  el.onlineJoinBackBtn.addEventListener('click', function(){ playClick(); showMenuStep('step-online-home'); });
+  el.onlineJoinConfirmBtn.addEventListener('click', function(){
+    playClick();
+    Online.joinLobbyByCode(el.onlineJoinCodeInput.value).then(function(code){
+      enterLobby(code);
+    }).catch(function(err){ showToast(err.message || 'Could not join that lobby'); });
+  });
+  el.onlineLobbyLeaveBtn.addEventListener('click', function(){
+    playClick();
+    exitOnlineLobby(true);
+  });
+  el.onlineLobbyStartBtn.addEventListener('click', function(){
+    playClick();
+    showToast('Live online matches are coming in the next update — lobby & matchmaking are ready to test!');
+  });
+  el.onlineLobbyCodeDisplay.addEventListener('click', function(){
+    if(!currentLobbyData) return;
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(currentLobbyData.code).then(function(){
+        el.onlineLobbyCodeDisplay.classList.add('copied');
+        showToast('Code copied');
+        setTimeout(function(){ el.onlineLobbyCodeDisplay.classList.remove('copied'); }, 1200);
+      }).catch(function(){});
+    }
+  });
+  el.onlineLeaderboardBtn.addEventListener('click', function(){
+    playClick();
+    el.onlineLeaderboardList.innerHTML = '<p class="tag">Loading…</p>';
+    showMenuStep('step-online-leaderboard');
+    Online.fetchLeaderboard(20).then(function(rows){
+      if(!rows.length){ el.onlineLeaderboardList.innerHTML = '<p class="tag">No games recorded yet — be the first!</p>'; return; }
+      el.onlineLeaderboardList.innerHTML = '';
+      rows.forEach(function(r, idx){
+        var row = document.createElement('div');
+        row.className = 'leaderboard-row';
+        row.innerHTML = '<span class="leaderboard-rank">#'+(idx+1)+'</span>' +
+          '<span class="leaderboard-name">'+(r.name||'Player')+'</span>' +
+          '<span class="leaderboard-stat">'+(r.wins||0)+'W – '+(r.losses||0)+'L</span>';
+        el.onlineLeaderboardList.appendChild(row);
+      });
+    }).catch(function(err){
+      el.onlineLeaderboardList.innerHTML = '<p class="tag">Couldn’t load the leaderboard right now.</p>';
+      console.error(err);
+    });
+  });
+  el.onlineLeaderboardBackBtn.addEventListener('click', function(){ playClick(); showMenuStep('step-online-home'); });
+
   el.offlineBtn.addEventListener('click', function(){
     playClick();
     state.currentMatchIsOnline = false;
@@ -5314,7 +5822,8 @@ function bootGame(){
   el.onlineBtn.addEventListener('click', function(){
     playClick();
     if(state.profile && state.profile.name){
-      showToast('Online multiplayer coming soon');
+      Online.init();
+      showMenuStep('step-online-home');
     } else {
       openProfileScreen(true);
     }
@@ -5332,11 +5841,12 @@ function bootGame(){
     saveProfile();
     if(state.pendingOnlineAfterProfile){
       state.pendingOnlineAfterProfile = false;
-      showToast('Profile saved \u2014 online multiplayer coming soon');
+      Online.init();
+      showMenuStep('step-online-home');
     } else {
       showToast('Profile saved');
+      showMenuStep('step-title');
     }
-    showMenuStep('step-title');
   });
   el.rulesBackBtn.addEventListener('click', function(){
     playClick();

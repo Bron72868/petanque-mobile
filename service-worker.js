@@ -1,4 +1,4 @@
-const CACHE_NAME = 'petanque-v15';
+const CACHE_NAME = 'petanque-v16';
 const MODEL_FILES = [
   'tree_default','tree_oak','tree_fat','tree_detailed','tree_palmTall','tree_palmBend',
   'tree_palmDetailedTall','tree_thin','tree_simple','rock_largeA','rock_largeB','rock_largeC',
@@ -18,6 +18,9 @@ const PRECACHE_URLS = [
   './icons/apple-touch-icon.png',
   'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js',
   'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js',
+  'https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js',
+  'https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js',
+  'https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js',
   'https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Work+Sans:wght@400;500;600;700&display=swap'
 ].concat(MODEL_FILES);
 
