@@ -2772,6 +2772,8 @@ function bootGame(){
     profile: null,
     pendingOnlineAfterProfile: false,
     currentMatchIsOnline: false,
+    onlineMatchStarted: false, onlineMyGlobalTeam: null, onlineIsHost: false,
+    onlineSlots: null, onlineLobbyId: null, onlineLastSeq: 0,
     skipCoinToss: false,
     thrownByPlayer: { you:[0,0,0], ai:[0,0,0] },
     activePlayerIdx: { you:0, ai:0 },
@@ -3624,7 +3626,7 @@ function bootGame(){
       return;
     }
     var captainIdx = findCaptainIdx(state.currentTeam);
-    var captainIsHuman = state.players[state.currentTeam][captainIdx].type === 'human';
+    var captainIsHuman = state.players[state.currentTeam][captainIdx].type === 'human' && onlineIsMyTurnToAct(state.currentTeam, captainIdx);
     if(!captainIsHuman){
       applyCircleDist(maxDist); // CPU always takes the maximum available throwing room
       onDone();
@@ -3682,22 +3684,23 @@ function bootGame(){
     ensurePlayerSlot(team, idx);
     var slot0 = state.players[team][idx];
     var humanTurn = slot0.type==='human';
+    var myTurnToAct = onlineIsMyTurnToAct(team, idx);
     var throwerName = playerDisplayName(team, idx);
     var label = note ? (throwerName+' throws the jack (retry)') : (throwerName+' throws the jack');
     setTurnText(label, team);
-    el.throwBtn.disabled = !humanTurn;
-    el.powerCaption.textContent = humanTurn
+    el.throwBtn.disabled = !(humanTurn && myTurnToAct);
+    el.powerCaption.textContent = (humanTurn && myTurnToAct)
       ? 'Aim for 6\u201310m \u2014 tap Throw, then time your locks'
-      : (throwerName+' is throwing the jack…');
-    if(humanTurn && totalHumanCount()>1){
+      : (myTurnToAct ? (throwerName+' is throwing the jack…') : ('Waiting for ' + throwerName + '…'));
+    if(humanTurn && myTurnToAct && totalHumanCount()>1){
       showToast('Pass the phone \u2014 ' + throwerName + '\u2019s turn!');
     }
-    state.turnTimeLeft = (state.timedGame && humanTurn) ? state.timeLimit : 0;
+    state.turnTimeLeft = (state.timedGame && humanTurn && myTurnToAct) ? state.timeLimit : 0;
     updateShotClockUI();
 
     if(note) showToast(note);
 
-    if(!humanTurn){
+    if(!humanTurn && myTurnToAct){
       var cfg = AI_LEVELS[slot0.difficulty];
       setTimeout(function(){ computerJackThrow(team, cfg); }, 900);
     }
@@ -3763,6 +3766,7 @@ function bootGame(){
       state.jack.placed = true;
       state.currentTeam = team;
       state.camMode = 'aim';
+      if(state.currentMatchIsOnline) onlineBroadcastState('jack');
       beginTurn();
       return;
     }
@@ -3789,6 +3793,7 @@ function bootGame(){
     var otherName = otherTeam==='you' ? 'You' : aiLabel();
     showToast(reason + ' \u2014 ' + otherName + ' place' + (otherTeam==='you'?'':'s') + ' the jack and throw' + (otherTeam==='you'?'':'s') + ' first');
     state.camMode = 'aim';
+    if(state.currentMatchIsOnline) onlineBroadcastState('jack');
     beginTurn();
   }
 
@@ -3919,31 +3924,32 @@ function bootGame(){
     ensurePlayerSlot(team, idx);
     var slot = state.players[team][idx];
     var humanTurn = slot.type==='human';
+    var myTurnToAct = onlineIsMyTurnToAct(team, idx);
     var throwerName = playerDisplayName(team, idx);
 
     setTurnText(throwerName + '\u2019s throw', team);
-    el.throwBtn.disabled = !humanTurn;
+    el.throwBtn.disabled = !(humanTurn && myTurnToAct);
     if(calledMode){
       var captainName = playerDisplayName(team, findCaptainIdx(team));
       el.powerCaption.textContent = forced
         ? (captainName + ' orders: ' + calledMode.toUpperCase())
         : (captainName + ' suggests: ' + calledMode.toUpperCase());
     } else {
-      el.powerCaption.textContent = humanTurn ? 'Tap Throw, then time your locks' : (throwerName+' is aiming…');
+      el.powerCaption.textContent = (humanTurn && myTurnToAct) ? 'Tap Throw, then time your locks' : (myTurnToAct ? (throwerName+' is aiming…') : ('Waiting for ' + throwerName + '…'));
     }
 
-    if(humanTurn && totalHumanCount()>1){
+    if(humanTurn && myTurnToAct && totalHumanCount()>1){
       showToast('Pass the phone \u2014 ' + throwerName + '\u2019s turn!');
     }
 
-    if(state.timedGame && humanTurn){
+    if(state.timedGame && humanTurn && myTurnToAct){
       state.turnTimeLeft = state.timeLimit;
     } else {
       state.turnTimeLeft = 0;
     }
     updateShotClockUI();
 
-    if(!humanTurn){
+    if(!humanTurn && myTurnToAct){
       var cfg = AI_LEVELS[slot.difficulty];
       var forcedMode = (calledMode && forced) ? calledMode : null;
       setTimeout(function(){ computerThrow(team, cfg, forcedMode); }, 900);
@@ -4488,7 +4494,10 @@ function bootGame(){
   function checkAllSettledSoon(){
     setTimeout(function(){
       if(state.phase !== 'settling') return; // turn already moved on (e.g. end was voided)
-      if(allSettled()) advanceTurn();
+      if(allSettled()){
+        if(state.currentMatchIsOnline) onlineBroadcastState('boule');
+        advanceTurn();
+      }
       else checkAllSettledSoon();
     }, 300);
   }
@@ -4948,10 +4957,18 @@ function bootGame(){
     if(state.phase!=='aiming') return false;
     var team = state.currentTeam;
     ensurePlayerSlot(team, 0);
-    if(state.throwingJack) return state.players[team][0].type==='human';
-    var idx = playerIndexForTeam(team);
-    ensurePlayerSlot(team, idx);
-    return state.players[team][idx].type==='human';
+    var idx, isHumanSlot;
+    if(state.throwingJack){
+      idx = 0;
+      isHumanSlot = state.players[team][0].type==='human';
+    } else {
+      idx = playerIndexForTeam(team);
+      ensurePlayerSlot(team, idx);
+      isHumanSlot = state.players[team][idx].type==='human';
+    }
+    if(!isHumanSlot) return false;
+    if(state.currentMatchIsOnline) return onlineIsMyTurnToAct(team, idx);
+    return true;
   }
   function updateAimFromTarget(){
     var solved = aimSolve(state.targetPos);
@@ -5522,12 +5539,25 @@ function bootGame(){
         });
       });
     }
+    function startMatch(lobbyId, tossWinnerGlobalTeam){
+      return db.collection('lobbies').doc(lobbyId).update({
+        status: 'active', matchStatus: 'playing', tossWinnerGlobalTeam: tossWinnerGlobalTeam,
+        turnSeq: 0, snapshot: null,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    }
+    function broadcastTurn(lobbyId, seq, snapshot){
+      return db.collection('lobbies').doc(lobbyId).update({
+        turnSeq: seq, snapshot: snapshot,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      }).catch(function(err){ console.error('broadcastTurn failed', err); });
+    }
     return {
       init: init, getUid: function(){ return uid; },
       createLobby: createLobby, joinLobbyByCode: joinLobbyByCode, quickPlay: quickPlay,
       listenToLobby: listenToLobby, stopListening: stopListening,
       setSlotBot: setSlotBot, clearSlot: clearSlot, leaveLobby: leaveLobby,
-      fetchLeaderboard: fetchLeaderboard
+      fetchLeaderboard: fetchLeaderboard, startMatch: startMatch, broadcastTurn: broadcastTurn
     };
   })();
 
@@ -5551,8 +5581,165 @@ function bootGame(){
         return;
       }
       currentLobbyData = data;
-      renderLobbyRoom();
+      if(data.status === 'active'){
+        if(!state.onlineMatchStarted){
+          startOnlineMatch(data);
+        } else if(typeof data.turnSeq === 'number' && data.turnSeq > (state.onlineLastSeq||0)){
+          state.onlineLastSeq = data.turnSeq;
+          onlineApplySnapshot(data.snapshot);
+        }
+      } else {
+        renderLobbyRoom();
+      }
     });
+  }
+
+  // ---------- Online match: turn-authority + full-board-resync sync layer ----------
+  // Design: whichever device actually ran the physics for a throw (the only device where
+  // checkAllSettledSoon/resolveJackThrow ever fire for that throw) broadcasts the resulting
+  // raw board state (boule/jack positions) after it settles. The receiving device applies it
+  // verbatim, then runs the SAME local advanceTurn()/beginTurn() used offline on that now-synced
+  // data — since those are deterministic pure functions of state.boules, both devices
+  // independently reach identical scoring/next-turn decisions without needing to transmit them.
+  // Every broadcast is a full resync (not a diff), so a rare compound edge case (e.g. the jack
+  // going fully dead mid-boule-settle) self-heals on the very next throw's broadcast instead of
+  // needing special-cased handling.
+  function onlineGlobalTeamFor(localTeam){
+    return localTeam === 'you' ? state.onlineMyGlobalTeam : (state.onlineMyGlobalTeam==='A' ? 'B' : 'A');
+  }
+  function onlineLocalTeamFor(globalTeam){
+    return globalTeam === state.onlineMyGlobalTeam ? 'you' : 'ai';
+  }
+  function onlineSlotFor(globalTeam, idx){
+    if(!state.onlineSlots) return null;
+    for(var i=0;i<state.onlineSlots.length;i++){
+      var s = state.onlineSlots[i];
+      if(s.team===globalTeam && s.slotIdx===idx) return s;
+    }
+    return null;
+  }
+  // Is THIS device the one that should actually execute the resolved current turn?
+  // Bots always run on the host (single authority, avoids two devices both deciding for a bot).
+  // Humans run on whichever device that human's own uid is signed in on.
+  function onlineIsMyTurnToAct(localTeam, idx){
+    if(!state.currentMatchIsOnline) return true;
+    var slot = onlineSlotFor(onlineGlobalTeamFor(localTeam), idx);
+    if(!slot) return false;
+    if(slot.type === 'bot') return !!state.onlineIsHost;
+    if(slot.type === 'human') return slot.uid === Online.getUid();
+    return false;
+  }
+
+  function startOnlineMatch(data){
+    if(state.onlineMatchStarted) return;
+    state.onlineMatchStarted = true;
+    var myUid = Online.getUid();
+    var mySlot = null;
+    data.slots.forEach(function(s){ if(s.uid === myUid) mySlot = s; });
+    state.onlineMyGlobalTeam = mySlot ? mySlot.team : 'A';
+    state.onlineIsHost = (data.hostUid === myUid);
+    state.onlineSlots = data.slots.map(function(s){ return { team:s.team, slotIdx:s.slotIdx, type:s.type, uid:s.uid||null, name:s.name||'' }; });
+    state.onlineLobbyId = currentLobbyId;
+    state.onlineLastSeq = data.turnSeq || 0;
+    state.currentMatchIsOnline = true;
+    state.timedGame = false; // shot-clock desync across devices isn't handled in v1 — untimed only
+    state.formatIdx = data.formatIdx || 0;
+    state.players.you = []; state.players.ai = [];
+    data.slots.forEach(function(s){
+      var localTeam = onlineLocalTeamFor(s.team);
+      state.players[localTeam][s.slotIdx] = {
+        type: s.type === 'bot' ? 'cpu' : 'human',
+        name: s.name || '', difficulty: s.type==='bot' ? (typeof s.difficulty==='number'?s.difficulty:1) : 2,
+        captain: s.slotIdx === 0
+      };
+    });
+    state.terrain = TERRAINS[data.terrainIdx || 0];
+    state.sceneryIdx = data.sceneryIdx || 0;
+    applyScenery(SCENERY[state.sceneryIdx]);
+    ensureAudio();
+    resetMatchState();
+    state.tossWinner = onlineLocalTeamFor(data.tossWinnerGlobalTeam);
+    showToast('Online match starting!');
+    proceedToGame();
+  }
+
+  function onlineCaptureSnapshot(){
+    return {
+      boules: state.boules.map(function(b){
+        return { globalTeam: onlineGlobalTeamFor(b.team), mode: b.mode, out: !!b.out,
+          x: b.mesh.position.x, y: b.mesh.position.y, z: b.mesh.position.z };
+      }),
+      jackPlaced: !!state.jack.placed,
+      jackPos: state.jack.placed ? { x: state.jack.pos.x, z: state.jack.pos.z } : null,
+      dir: state.dir,
+      endNumber: state.endNumber,
+      currentTeamGlobal: onlineGlobalTeamFor(state.currentTeam)
+    };
+  }
+  function onlineBroadcastState(kind){
+    if(!state.onlineLobbyId) return;
+    var snap = onlineCaptureSnapshot();
+    snap.kind = kind;
+    var newSeq = (state.onlineLastSeq||0) + 1;
+    state.onlineLastSeq = newSeq;
+    Online.broadcastTurn(state.onlineLobbyId, newSeq, snap);
+  }
+  function onlineApplySnapshot(snapshot){
+    if(!snapshot) return;
+    if(el.result.style.display !== 'none') el.result.style.display = 'none';
+    state.boules.forEach(function(b){ if(b.mesh && b.mesh.parent) scene.remove(b.mesh); });
+    state.boules = [];
+    state.thrown = { you:0, ai:0 };
+    state.thrownByPlayer = { you:[0,0,0], ai:[0,0,0] };
+    (snapshot.boules||[]).forEach(function(sb){
+      var localTeam = onlineLocalTeamFor(sb.globalTeam);
+      var meshObj;
+      if(sb.out){
+        meshObj = { position: new THREE.Vector3(sb.x, sb.y, sb.z) };
+      } else {
+        meshObj = makeBouleMesh(localTeam);
+        meshObj.position.set(sb.x, sb.y, sb.z);
+      }
+      state.boules.push({
+        mesh: meshObj, team: localTeam, _id: nextBouleId++, ownerName:'', mode: sb.mode||'point',
+        throwerTeam: localTeam, throwerIdx: 0, shotHitRegistered:true,
+        spin:0, spinZ:0, rollDirSet:true, rollDirX:0, rollDirZ:0,
+        vel: new THREE.Vector3(0,0,0), resting:true, out: !!sb.out, hasLanded:true
+      });
+      state.thrown[localTeam]++;
+    });
+    state.jack.placed = !!snapshot.jackPlaced;
+    if(snapshot.jackPlaced){
+      state.jack.pos.set(snapshot.jackPos.x, JACK_R, snapshot.jackPos.z);
+      jackMesh.position.copy(state.jack.pos);
+      jackMesh.visible = true;
+    } else {
+      jackMesh.visible = false;
+    }
+    state.jackResting = true;
+    state.throwingJack = false;
+    state.dir = snapshot.dir;
+    state.endNumber = snapshot.endNumber;
+    state.camMode = 'aim';
+    updateScoreboard();
+    renderLegend();
+    if(snapshot.kind === 'jack'){
+      state.currentTeam = onlineLocalTeamFor(snapshot.currentTeamGlobal);
+      state.phase = 'aiming';
+      beginTurn();
+    } else {
+      state.phase = 'settling';
+      advanceTurn();
+    }
+  }
+  function onlineExitMatch(){
+    Online.leaveLobby(state.onlineLobbyId);
+    state.currentMatchIsOnline = false;
+    state.onlineMatchStarted = false;
+    state.onlineLobbyId = null;
+    currentLobbyId = null; currentLobbyData = null;
+    el.menu.style.display = 'flex';
+    showMenuStep('step-online-home');
   }
 
   function renderLobbyRoom(){
@@ -5697,7 +5884,17 @@ function bootGame(){
   });
   el.onlineLobbyStartBtn.addEventListener('click', function(){
     playClick();
-    showToast('Live online matches are coming in the next update — lobby & matchmaking are ready to test!');
+    if(!currentLobbyData) return;
+    if(currentLobbyData.formatIdx !== 0){
+      showToast('Live sync only supports Singles for now — create a Singles lobby to play live');
+      return;
+    }
+    var tossWinnerGlobalTeam = Math.random() < 0.5 ? 'A' : 'B';
+    el.onlineLobbyStartBtn.disabled = true;
+    Online.startMatch(currentLobbyId, tossWinnerGlobalTeam).catch(function(err){
+      el.onlineLobbyStartBtn.disabled = false;
+      showToast(err.message || 'Could not start match');
+    });
   });
   el.onlineLobbyCodeDisplay.addEventListener('click', function(){
     if(!currentLobbyData) return;
@@ -6110,6 +6307,8 @@ function bootGame(){
         el.menu.style.display = 'flex';
         openTournamentDetail(tId);
       }
+    } else if(state.currentMatchIsOnline){
+      onlineExitMatch();
     } else {
       el.menu.style.display = 'flex';
       showMenuStep('step-setup');
