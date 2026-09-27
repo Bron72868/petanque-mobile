@@ -721,14 +721,6 @@
         <div class="row-controls" id="captain-pick-options" style="margin-top:0; flex-wrap:wrap;"></div>
       </div>
 
-      <div class="lock-panel" id="circle-choice-panel" style="display:none;">
-        <div class="lock-caption" id="circle-choice-caption">Where do you want the circle?</div>
-        <div class="row-controls" style="margin-top:0;">
-          <button class="mode-btn" id="circle-choice-natural" style="flex:1;padding:10px 4px;">Over the jack</button>
-          <button class="mode-btn" id="circle-choice-max" style="flex:1;padding:10px 4px;">Pull back</button>
-        </div>
-      </div>
-
       <div class="row-controls">
         <div class="ctrl-group" id="arc-ctrl-group">
           <button class="ctrl-btn" id="arc-down">▼</button>
@@ -1011,6 +1003,15 @@
     </div>
     <button class="primary-btn" id="replay-btn">Play again</button>
     <button class="primary-btn secondary-btn" id="practice-exit-btn" style="display:none;">Back to tutorial</button>
+  </div>
+</div>
+
+<div class="overlay" id="circle-choice-overlay" style="display:none;">
+  <div class="card">
+    <h1>Place the <em>circle</em></h1>
+    <p class="tag" id="circle-choice-caption-text">Where do you want to throw from?</p>
+    <button class="primary-btn" id="circle-choice-natural-btn" style="margin-bottom:12px;">Over the jack</button>
+    <button class="primary-btn secondary-btn" id="circle-choice-max-btn">Pull back for more room</button>
   </div>
 </div>
 
@@ -2793,10 +2794,10 @@ function bootGame(){
     captainPickPanel: document.getElementById('captain-pick-panel'),
     captainPickCaption: document.getElementById('captain-pick-caption'),
     captainPickOptions: document.getElementById('captain-pick-options'),
-    circleChoicePanel: document.getElementById('circle-choice-panel'),
-    circleChoiceCaption: document.getElementById('circle-choice-caption'),
-    circleChoiceNatural: document.getElementById('circle-choice-natural'),
-    circleChoiceMax: document.getElementById('circle-choice-max'),
+    circleChoiceOverlay: document.getElementById('circle-choice-overlay'),
+    circleChoiceCaptionText: document.getElementById('circle-choice-caption-text'),
+    circleChoiceNatural: document.getElementById('circle-choice-natural-btn'),
+    circleChoiceMax: document.getElementById('circle-choice-max-btn'),
     arcCtrlGroup: document.getElementById('arc-ctrl-group'),
     controlsHint: document.getElementById('controls-hint'),
     powerCaption: document.getElementById('power-caption'),
@@ -3580,14 +3581,14 @@ function bootGame(){
     showLockUI(false);
     el.captainCallPanel.style.display = 'none';
     el.captainPickPanel.style.display = 'none';
-    el.circleChoicePanel.style.display = 'block';
     var name = playerDisplayName(state.currentTeam, findCaptainIdx(state.currentTeam));
     setTurnText(name + ' is placing the circle\u2026', state.currentTeam);
-    el.circleChoiceCaption.textContent = name + ', where do you want the circle?';
+    el.circleChoiceCaptionText.textContent = name + ', the jack landed close enough that you get to choose your throwing spot.';
     el.circleChoiceNatural.textContent = 'Over the jack (' + naturalDist.toFixed(1) + 'm room)';
     el.circleChoiceMax.textContent = 'Pull back (' + maxDist.toFixed(1) + 'm room)';
-    el.circleChoiceNatural.onclick = function(){ playClick(); el.circleChoicePanel.style.display='none'; onChosen(naturalDist); };
-    el.circleChoiceMax.onclick = function(){ playClick(); el.circleChoicePanel.style.display='none'; onChosen(maxDist); };
+    el.circleChoiceOverlay.style.display = 'flex';
+    el.circleChoiceNatural.onclick = function(){ playClick(); el.circleChoiceOverlay.style.display='none'; onChosen(naturalDist); };
+    el.circleChoiceMax.onclick = function(){ playClick(); el.circleChoiceOverlay.style.display='none'; onChosen(maxDist); };
   }
   // jackAbsZ: the jack's last valid position (world Z) that the circle should be placed over.
   // onDone is called once the circle's final position has been decided and applied.
