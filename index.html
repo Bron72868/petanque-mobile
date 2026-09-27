@@ -5138,7 +5138,12 @@ function bootGame(){
     var sign = error < 0 ? -1 : 1;
     var carreauTol = isShot ? carreauTolerance : 0;
     if(isShot && absErr <= carreauTol) return error * 0.05;          // carreau precision: essentially perfect
-    var insideDamp = isShot ? 0.35 : 0;                              // pointing: zero error inside the zone
+    // Shooting at 0.35 here left too much residual aim/power error even on a "hit the zone"
+    // throw — at a typical shooting range the leftover angle alone translates to a real miss
+    // distance bigger than two boules' combined radius (7.3cm), so landing in the zone didn't
+    // reliably mean landing ON the target, contrary to what this zone is supposed to promise.
+    // Tightened so a genuine zone-hit actually connects at realistic shooting ranges.
+    var insideDamp = isShot ? 0.15 : 0;                              // pointing: zero error inside the zone
     if(absErr <= tolerance) return error * insideDamp;
     var excess = absErr - tolerance;
     var outsideAmp = isShot ? 0.6 : 0.35;                            // pointing misses sting less than shooting misses
