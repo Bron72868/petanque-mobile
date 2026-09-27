@@ -1,0 +1,15 @@
+{
+  "name": "Pétanque Champions",
+  "short_name": "Pétanque",
+  "description": "3D pétanque with practice drills, terrains, and an AI opponent.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#bf5b2e",
+  "theme_color": "#bf5b2e",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
