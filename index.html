@@ -4187,6 +4187,9 @@ function bootGame(){
         jv.x = vAlongJ*state.jackRollDirX - vLatJ*state.jackRollDirZ;
         jv.z = vAlongJ*state.jackRollDirZ + vLatJ*state.jackRollDirX;
       }
+      // Stone-clip chance + settle detection only — rolling resistance is already applied
+      // above in the vAlongJ/vLatJ branch (see the matching comment on the boule's copy of
+      // this fix; this used to double-apply friction here too).
       if(jackMesh.position.y - JACK_R < 0.002 && Math.abs(jv.y) < 0.6){
         var jSpeed = Math.sqrt(jv.x*jv.x + jv.z*jv.z);
         if(terrain.chaos > 0 && jSpeed > 0.3){
@@ -4198,12 +4201,6 @@ function bootGame(){
               spawnDust(jackMesh.position, 2, 0.25);
             }
           }
-        }
-        var jDecel = terrain.friction*dt;
-        if(jSpeed > 0){
-          var jNewSpeed = Math.max(0, jSpeed - jDecel);
-          var jScale = jSpeed>0 ? jNewSpeed/jSpeed : 0;
-          jv.x *= jScale; jv.z *= jScale;
         }
         if(jSpeed < SETTLE_SPEED){
           state.jackResting = true;
@@ -4345,7 +4342,13 @@ function bootGame(){
         }
       }
 
-      // rolling friction once basically grounded
+      // Stone-clip chance mid-roll, and settle detection, once basically grounded. Rolling
+      // resistance itself is already applied above in the vAlong/vLat ground-collision branch —
+      // this block used to *also* decelerate horizSpeed here, double-applying friction every
+      // frame while rolling. That silently cut the roll distance roughly in half, which mostly
+      // went unnoticed on high-arc throws (almost all air time, little roll) but made low-arc
+      // throws land well short of the aim guide's predicted spot, since those rely on the roll
+      // for most of their distance. Removed — friction is applied exactly once now.
       if(b.mesh.position.y - BOULE_R < 0.002 && Math.abs(b.vel.y) < 0.6){
         var horizSpeed = Math.sqrt(b.vel.x*b.vel.x + b.vel.z*b.vel.z);
         // chance of clipping a stone mid-roll — only when actually rolling near a real one
@@ -4359,12 +4362,6 @@ function bootGame(){
               spawnDust(b.mesh.position, 2, 0.3);
             }
           }
-        }
-        var decel = terrain.friction*dt;
-        if(horizSpeed > 0){
-          var newSpeed = Math.max(0, horizSpeed - decel);
-          var scale = horizSpeed>0 ? newSpeed/horizSpeed : 0;
-          b.vel.x *= scale; b.vel.z *= scale;
         }
         if(horizSpeed < SETTLE_SPEED){
           b.resting = true;
@@ -4883,7 +4880,12 @@ function bootGame(){
             if(Math.abs(vx) < rdecel){ vx = 0; } else { vx -= Math.sign(vx)*rdecel; }
             spin = vx/radius;
           }
-          x += vx*dt;
+          // x already advanced once this iteration by the unconditional "x += vx*dt" at the top
+          // of the loop — an extra one used to sit here too, silently making the guide think a
+          // given speed would roll about twice as far as real physics ever delivers. That made
+          // solveThrowSpeed()'s binary search settle on an under-powered speed for any target
+          // range with meaningful roll-out, so the actual throw landed short — worst on low-arc
+          // throws, which are mostly roll rather than airtime.
           if(Math.abs(vx) < SETTLE_SPEED && Math.abs(vx-spin*radius) < 0.02){
             return x;
           }
