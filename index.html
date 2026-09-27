@@ -3686,7 +3686,11 @@ function bootGame(){
     var humanTurn = slot0.type==='human';
     var myTurnToAct = onlineIsMyTurnToAct(team, idx);
     var throwerName = playerDisplayName(team, idx);
-    var label = note ? (throwerName+' throws the jack (retry)') : (throwerName+' throws the jack');
+    // "note" is only ever passed for the "jack knocked dead mid-play, void the end, same
+    // team re-throws" rule (see handleJackGoneDead) — a distinct, legitimate FIPJP rule from
+    // "first throw was invalid" (which never gets a retry; see handleJackFoul). Label it
+    // as a replay, not a "retry", so it doesn't read as if the one-throw rule was broken.
+    var label = note ? (throwerName+' throws the jack again (dead ball)') : (throwerName+' throws the jack');
     setTurnText(label, team);
     el.throwBtn.disabled = !(humanTurn && myTurnToAct);
     el.powerCaption.textContent = (humanTurn && myTurnToAct)
@@ -6540,7 +6544,18 @@ function bootGame(){
       var Fx = DIR*Math.sin(yaw), Fz = -DIR*Math.cos(yaw);
       var originZ = DIR*state.circleDist;
       desiredPos = new THREE.Vector3(-3.6*Fx, 2.7, originZ - 1.87*Fz + DIR*2.4);
-      desiredLook = new THREE.Vector3(9*Fx, 0.1, originZ + 9*Fz);
+      // Look at the actual aim target (plus a little lead-room beyond it), not a fixed
+      // 9m-along-yaw projection — the court is only 4m wide, so at any real aim angle that
+      // fixed projection swings the look point toward the side boundary instead of following
+      // the throw, cutting the real target/far string out of frame.
+      var aimDx = state.targetPos.x - 0, aimDz = state.targetPos.z - originZ;
+      var aimDist = Math.max(0.5, Math.sqrt(aimDx*aimDx + aimDz*aimDz));
+      var lookDist = aimDist + 2;
+      desiredLook = new THREE.Vector3(
+        (aimDx/aimDist) * lookDist,
+        0.1,
+        originZ + (aimDz/aimDist) * lookDist
+      );
     } else if(state.camMode === 'chase'){
       if(state.throwingJack){
         // the jack itself is what's flying — no fixed jack reference to frame from yet,
