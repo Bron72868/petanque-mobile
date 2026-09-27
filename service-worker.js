@@ -1,4 +1,4 @@
-const CACHE_NAME = 'petanque-v24';
+const CACHE_NAME = 'petanque-v25';
 const MODEL_FILES = [
   'tree_default','tree_oak','tree_fat','tree_detailed','tree_palmTall','tree_palmBend',
   'tree_palmDetailedTall','tree_thin','tree_simple','rock_largeA','rock_largeB','rock_largeC',
