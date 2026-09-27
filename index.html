@@ -2541,32 +2541,6 @@ function bootGame(){
       roughTex: makeSandRoughTexture(),
       normalTex: (function(){ var t=makeGravelNormalTexture(550, 2.3, 4.3, 2.0); t.repeat.set(3,11); return t; })(),
       stoneLayer: { count:320, minSize:0.025, maxSize:0.055, colors:['#6f6f6c','#57574f','#8a8a80'] }
-    },
-    // --- Diagnostic: the two real base materials, with NO loose stone/gravel layer at all.
-    // Everything else (the 4 terrains above) is really just different gravel scattered on
-    // top of one of these two bases — these exist purely to evaluate the bases themselves
-    // before the gravel is rebuilt as a proper separate overlay. Chaos is 0 for both: an
-    // even, un-scattered surface is inherently predictable — irregularity should come from
-    // loose stones sitting on top, not the base material itself. ---
-    {
-      name:'[Base only] Compact dirt',
-      desc:'The bare compact-dirt base, no gravel at all. Soft and absorbing — low bounce, fairly high rolling friction.',
-      restitution:0.10, friction:4.0, chaos:0.0,
-      swatch:'#5c4530',
-      colorTex: makeDirtColorTexture(),
-      roughTex: makeDirtRoughTexture(),
-      normalTex: (function(){ var t=makeGravelNormalTexture(55, 18, 55, 0.18); t.repeat.set(3,11); return t; })(),
-      stoneLayer: null
-    },
-    {
-      name:'[Base only] Clay / hard ground',
-      desc:'The bare clay/concrete-like base, no gravel at all. Hard and smooth — noticeably more bounce, rolls further with less rolling resistance.',
-      restitution:0.38, friction:2.0, chaos:0.0,
-      swatch:'#af7844',
-      colorTex: makeClayColorTexture(),
-      roughTex: makeClayRoughTexture(),
-      normalTex: (function(){ var t=makeGravelNormalTexture(16, 45, 75, 0.08); t.repeat.set(3,11); return t; })(),
-      stoneLayer: null
     }
   ];
 
@@ -2786,6 +2760,7 @@ function bootGame(){
     pendingLockTimeout: null,
     lockClock: 0,
     targetPowerFrozen: 0.5,
+    lockZoneScale: 1,
     lockedPower: null,
     lockedYawDeg: 0,
     teamCardLevel: { you:0, ai:0 },  // 0 = clean, 1 = yellow given, 2 = orange given, next = red (disqualified)
@@ -4003,6 +3978,7 @@ function bootGame(){
   function resolveRushedThrow(){
     if(!state.lockPhase){
       state.targetPowerFrozen = computeTargetPower();
+      state.lockZoneScale = computeLockZoneScale();
       finalizeThrow(state.targetPowerFrozen, 0);
     } else if(state.lockPhase==='power'){
       finalizeThrow(currentPowerIndicator(), 0);
@@ -4129,7 +4105,10 @@ function bootGame(){
           // flat energy loss kept small so even a low-restitution (soft) terrain still shows a
           // small settling bounce instead of a dead thud — big enough terrains still decay fast
           // across successive bounces, since each one starts from a smaller incoming speed
-          var jvyOut = Math.max(0, jVyIn*terrain.restitution - 0.15);
+          var jHorizIn = Math.sqrt(vAlongJ*vAlongJ + vLatJ*vLatJ);
+          var jSteepness = jVyIn / Math.max(0.01, jVyIn + jHorizIn);
+          var jRestitution = terrain.restitution * (1 - jSteepness*STEEP_BOUNCE_DAMPING);
+          var jvyOut = Math.max(0, jVyIn*jRestitution - 0.15);
           var jJn = jvyOut + jVyIn;
 
           var jContact = vAlongJ - state.jackSpin*JACK_R;
@@ -4271,7 +4250,10 @@ function bootGame(){
           // real oblique-impact physics, not a tuned curve
           // flat energy loss kept small (see matching comment on the jack's bounce) so a soft
           // terrain still gives a small visible settling bounce rather than none at all
-          var vyOut = Math.max(0, incomingVy*terrain.restitution - 0.15);
+          var incomingHorizForBounce = Math.sqrt(vAlong*vAlong + vLat*vLat);
+          var bounceSteepness = incomingVy / Math.max(0.01, incomingVy + incomingHorizForBounce);
+          var restitutionUsed = terrain.restitution * (1 - bounceSteepness*STEEP_BOUNCE_DAMPING);
+          var vyOut = Math.max(0, incomingVy*restitutionUsed - 0.15);
           b.vel.y = vyOut;
           var Jn = vyOut + incomingVy;
 
@@ -4827,6 +4809,15 @@ function bootGame(){
   var SPHERE_I_FACTOR = 0.4;      // solid sphere moment of inertia = 0.4*m*r^2
   var SLIP_COUPLING = 3.5;        // = 1 + 1/SPHERE_I_FACTOR, the impulse<->slip coupling constant
   var MU_IMPACT = 0.85;           // Coulomb friction coefficient during the bounce itself
+  // A steep, near-vertical impact drives straight into loose gravel/dirt and digs in, losing
+  // real energy to displacing material — a shallow, skimming impact barely disturbs the surface
+  // and keeps most of its bounce. The base restitution formula below didn't distinguish these
+  // (same bounce regardless of angle), so a high lob — almost all vertical velocity, tiny
+  // horizontal component — bounced exactly as much as a flat, skipping throw on the same
+  // terrain, which reads as "way too much" since a real steep lob visibly plants itself.
+  // STEEP_BOUNCE_DAMPING is how much of the terrain's restitution gets cut at a fully vertical
+  // impact (steepness=1); a flat impact (steepness=0) is untouched.
+  var STEEP_BOUNCE_DAMPING = 0.6;
   var MU_SLIDE_FACTOR = 0.5;      // continuous ground-slip friction, scaled from terrain friction
   var POINT_DEFAULT_SPIN = -8;    // rad/s — a gentle natural backspin, standard technique
   var SHOOT_DEFAULT_SPIN = -8;    // shots are thrown harder/flatter but still carry natural backspin
@@ -4857,9 +4848,12 @@ function bootGame(){
       if(y - radius <= 0){
         y = radius;
         if(Math.abs(vy) > 1.0){
-          // impulsive bounce — keep this energy-loss constant identical to the live physics
-          // above, or the aim guide's predicted landing/rest spot will lie
-          var vyOut = Math.max(0, Math.abs(vy)*restitution - 0.15);
+          // impulsive bounce — keep this identical to the live physics above (including the
+          // steepness-based restitution damping), or the aim guide's predicted landing/rest
+          // spot will lie
+          var guideSteepness = Math.abs(vy) / Math.max(0.01, Math.abs(vy) + Math.abs(vx));
+          var guideRestitution = restitution * (1 - guideSteepness*STEEP_BOUNCE_DAMPING);
+          var vyOut = Math.max(0, Math.abs(vy)*guideRestitution - 0.15);
           var Jn = (vyOut + Math.abs(vy)); // mass=1 (relative units, consistent with BOULE_MASS)
           var vContact = vx - spin*radius;
           var Jneeded = Math.abs(vContact)/SLIP_COUPLING;
@@ -5015,10 +5009,24 @@ function bootGame(){
   var LOCK_POWER_PERIOD = 3.0; // seconds per full back-and-forth cycle
   var LOCK_DIR_PERIOD = 3.2;   // slower than before — easier to time left/right
   var LOCK_DIR_RANGE = 30;     // degrees either side of dead-straight
-  var POWER_TOLERANCE = 0.05;  // matches the 10%-wide green zone (±5 percentage points)
-  var DIR_TOLERANCE = 3;       // matches the 10%-wide zone on the ±30° bar (±3°)
+  var POWER_TOLERANCE = 0.05;  // base green-zone half-width (±5 percentage points) before scaling
+  var DIR_TOLERANCE = 3;       // base direction green-zone half-width (±3°) before scaling
+  // A fixed-width zone means a big, powerful throw is exactly as forgiving as a gentle
+  // point-blank one — but a given % power error turns into a much bigger real distance miss
+  // once you're throwing hard/far. Shrink the zone (both power and direction, together) the
+  // more power a throw needs, so longer throws are genuinely harder to land precisely.
+  var ZONE_SHRINK_AT_MAX = 0.6;   // how much smaller the zone gets at full required power
+  var ZONE_SHRINK_MIN_SCALE = 0.4; // never shrink past this fraction, or long throws become unplayable
+  function computeLockZoneScale(){
+    return THREE.MathUtils.clamp(1 - state.targetPowerFrozen*ZONE_SHRINK_AT_MAX, ZONE_SHRINK_MIN_SCALE, 1);
+  }
   var LOCK_RESULT_PAUSE = 1100; // ms to show the locked result before moving on
-  var POWER_EASE_EXP = 2.2;    // >1 = indicator lingers at low power, races through high power
+  // The indicator's position is tri^POWER_EASE_EXP, where tri is a plain linear 0->1->0
+  // triangle wave — since tri(t) is symmetric around the midpoint of each half-cycle, so is
+  // any power of it: the indicator accelerates approaching max power and decelerates leaving
+  // it by the exact same (mirrored) curve, not just "slow at one end, fast at the other".
+  // Raised from 2.2 for a more pronounced speed-up/slow-down around the peak.
+  var POWER_EASE_EXP = 3.0;
   var SHOOT_ARC_BIAS = 10;     // degrees added above the bare-minimum arc for shots, so the
                                 // suggested power isn't always pinned near 100% by default
 
@@ -5125,10 +5133,10 @@ function bootGame(){
   var POWER_CARREAU_TOLERANCE = 0.018;
   var DIR_CARREAU_TOLERANCE = 1.0;
 
-  function applyLockCurve(error, tolerance, isShot){
+  function applyLockCurve(error, tolerance, carreauTolerance, isShot){
     var absErr = Math.abs(error);
     var sign = error < 0 ? -1 : 1;
-    var carreauTol = isShot ? (tolerance===POWER_TOLERANCE ? POWER_CARREAU_TOLERANCE : DIR_CARREAU_TOLERANCE) : 0;
+    var carreauTol = isShot ? carreauTolerance : 0;
     if(isShot && absErr <= carreauTol) return error * 0.05;          // carreau precision: essentially perfect
     var insideDamp = isShot ? 0.35 : 0;                              // pointing: zero error inside the zone
     if(absErr <= tolerance) return error * insideDamp;
@@ -5136,8 +5144,8 @@ function bootGame(){
     var outsideAmp = isShot ? 0.6 : 0.35;                            // pointing misses sting less than shooting misses
     return sign * (tolerance*insideDamp + excess*outsideAmp);
   }
-  function lockVerdict(absErr, tolerance, isShot){
-    var carreauTol = isShot ? (tolerance===POWER_TOLERANCE ? POWER_CARREAU_TOLERANCE : DIR_CARREAU_TOLERANCE) : 0;
+  function lockVerdict(absErr, tolerance, carreauTolerance, isShot){
+    var carreauTol = isShot ? carreauTolerance : 0;
     if(isShot && absErr <= carreauTol) return 'Carreau range!';
     if(absErr <= tolerance) return 'Nailed it!';
     if(absErr <= tolerance*2.5) return 'Close';
@@ -5164,6 +5172,7 @@ function bootGame(){
   }
   function beginPowerLock(){
     state.targetPowerFrozen = computeTargetPower();
+    state.lockZoneScale = computeLockZoneScale();
     state.lockPhase = 'power';
     state.lockClock = 0;
     state.lockFrozen = false;
@@ -5172,10 +5181,11 @@ function bootGame(){
     el.lockIndicator.classList.remove('good','bad');
     el.lockCaption.textContent = 'Lock your power!';
     el.lockTargetMarker.style.left = (state.targetPowerFrozen*100) + '%';
+    el.lockTargetMarker.style.width = (POWER_TOLERANCE*2*100*state.lockZoneScale) + '%';
     if(isShotNow()){
       el.lockTargetCarreau.style.display = 'block';
       el.lockTargetCarreau.style.left = (state.targetPowerFrozen*100) + '%';
-      el.lockTargetCarreau.style.width = (POWER_CARREAU_TOLERANCE*2*100) + '%';
+      el.lockTargetCarreau.style.width = (POWER_CARREAU_TOLERANCE*2*100*state.lockZoneScale) + '%';
     } else {
       el.lockTargetCarreau.style.display = 'none';
     }
@@ -5185,10 +5195,12 @@ function bootGame(){
     state.lockedPower = THREE.MathUtils.clamp(value, 0, 1);
     playClick();
     var isShot = isShotNow();
+    var tolerance = POWER_TOLERANCE*state.lockZoneScale;
+    var carreauTolerance = POWER_CARREAU_TOLERANCE*state.lockZoneScale;
     var absErr = Math.abs(state.lockedPower - state.targetPowerFrozen);
-    el.lockIndicator.classList.toggle('good', absErr<=POWER_TOLERANCE);
-    el.lockIndicator.classList.toggle('bad', absErr>POWER_TOLERANCE*2.5);
-    el.lockCaption.textContent = lockVerdict(absErr, POWER_TOLERANCE, isShot) +
+    el.lockIndicator.classList.toggle('good', absErr<=tolerance);
+    el.lockIndicator.classList.toggle('bad', absErr>tolerance*2.5);
+    el.lockCaption.textContent = lockVerdict(absErr, tolerance, carreauTolerance, isShot) +
       ' (' + Math.round(state.lockedPower*100) + '% \u2014 target ' + Math.round(state.targetPowerFrozen*100) + '%)';
     state.lockFrozen = true;
     el.throwBtn.disabled = true;
@@ -5206,10 +5218,11 @@ function bootGame(){
     el.lockIndicator.classList.remove('good','bad');
     el.lockCaption.textContent = 'Lock your aim!';
     el.lockTargetMarker.style.left = '50%';
+    el.lockTargetMarker.style.width = (DIR_TOLERANCE/LOCK_DIR_RANGE*100*state.lockZoneScale) + '%';
     if(isShotNow()){
       el.lockTargetCarreau.style.display = 'block';
       el.lockTargetCarreau.style.left = '50%';
-      el.lockTargetCarreau.style.width = (DIR_CARREAU_TOLERANCE/LOCK_DIR_RANGE*100) + '%';
+      el.lockTargetCarreau.style.width = (DIR_CARREAU_TOLERANCE/LOCK_DIR_RANGE*100*state.lockZoneScale) + '%';
     } else {
       el.lockTargetCarreau.style.display = 'none';
     }
@@ -5218,10 +5231,12 @@ function bootGame(){
     state.lockedYawDeg = valueDeg;
     playClick();
     var isShot = isShotNow();
+    var tolerance = DIR_TOLERANCE*state.lockZoneScale;
+    var carreauTolerance = DIR_CARREAU_TOLERANCE*state.lockZoneScale;
     var absErr = Math.abs(valueDeg);
-    el.lockIndicator.classList.toggle('good', absErr<=DIR_TOLERANCE);
-    el.lockIndicator.classList.toggle('bad', absErr>DIR_TOLERANCE*2.5);
-    el.lockCaption.textContent = lockVerdict(absErr, DIR_TOLERANCE, isShot) +
+    el.lockIndicator.classList.toggle('good', absErr<=tolerance);
+    el.lockIndicator.classList.toggle('bad', absErr>tolerance*2.5);
+    el.lockCaption.textContent = lockVerdict(absErr, tolerance, carreauTolerance, isShot) +
       ' (' + (valueDeg>=0?'+':'') + Math.round(valueDeg) + '\u00b0)';
     state.lockFrozen = true;
     el.throwBtn.disabled = true;
@@ -5232,11 +5247,12 @@ function bootGame(){
   }
   function finalizeThrow(lockedPower, lockedYawDeg){
     var isShot = isShotNow();
+    var scale = state.lockZoneScale || 1;
     var powerError = lockedPower - state.targetPowerFrozen;
-    var effectivePowerError = applyLockCurve(powerError, POWER_TOLERANCE, isShot);
+    var effectivePowerError = applyLockCurve(powerError, POWER_TOLERANCE*scale, POWER_CARREAU_TOLERANCE*scale, isShot);
     var power = THREE.MathUtils.clamp(state.targetPowerFrozen + effectivePowerError, 0, 1);
 
-    var effectiveDirDeg = applyLockCurve(lockedYawDeg||0, DIR_TOLERANCE, isShot);
+    var effectiveDirDeg = applyLockCurve(lockedYawDeg||0, DIR_TOLERANCE*scale, DIR_CARREAU_TOLERANCE*scale, isShot);
     var finalYaw = state.aimAngle + THREE.MathUtils.degToRad(effectiveDirDeg);
 
     state.lockPhase = null;
