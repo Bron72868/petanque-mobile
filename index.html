@@ -946,6 +946,17 @@
       <h1 class="rules-h1">Create a lobby</h1>
       <div class="rules" style="margin-bottom:8px;"><b>Format</b></div>
       <div class="option-grid" id="online-format-grid" style="grid-template-columns:1fr 1fr 1fr;"></div>
+      <div class="rules" style="margin-bottom:8px;"><b>Terrain</b></div>
+      <div class="terrain-grid" id="online-terrain-grid"></div>
+      <div class="rules" style="margin-bottom:8px;"><b>Background</b></div>
+      <div class="scenery-grid" id="online-scenery-grid"></div>
+      <div class="toggle-row">
+        <label class="toggle-switch">
+          <input type="checkbox" id="online-timed-checkbox">
+          <span class="toggle-slider"></span>
+        </label>
+        <span class="toggle-label">Timed turns — a 60s shot clock per throw</span>
+      </div>
       <div class="toggle-row" style="margin-top:4px;">
         <label class="toggle-switch">
           <input type="checkbox" id="online-public-checkbox" checked>
@@ -2963,6 +2974,9 @@ function bootGame(){
     stepOnlineCreate: document.getElementById('step-online-create'),
     onlineCreateBackBtn: document.getElementById('online-create-back-btn'),
     onlineFormatGrid: document.getElementById('online-format-grid'),
+    onlineTerrainGrid: document.getElementById('online-terrain-grid'),
+    onlineSceneryGrid: document.getElementById('online-scenery-grid'),
+    onlineTimedCheckbox: document.getElementById('online-timed-checkbox'),
     onlinePublicCheckbox: document.getElementById('online-public-checkbox'),
     onlineCreateConfirmBtn: document.getElementById('online-create-confirm-btn'),
     stepOnlineJoin: document.getElementById('step-online-join'),
@@ -4111,6 +4125,9 @@ function bootGame(){
         state.thrown[team]++;
         state.thrownByPlayer[team][state.activePlayerIdx[team]]++;
         updateScoreboard();
+        // no real boule was ever thrown here, just a thrown-count bump — broadcast explicitly
+        // or the other device's derived thrown count silently falls out of sync
+        if(state.currentMatchIsOnline) onlineBroadcastState('boule');
         advanceTurn();
       }
       return;
@@ -4842,7 +4859,12 @@ function bootGame(){
 
   // Red card: a team's third time-violation this match disqualifies them outright —
   // the match ends immediately, no further leniency, per FIPJP Article 35.
-  function disqualifyTeamForMatch(team){
+  function disqualifyTeamForMatch(team, fromRemote){
+    // Time-violation state (teamCardLevel) is tracked locally per-device and only ever advances
+    // on whichever device is authoritative for that team's clock, so the OTHER device has no
+    // way to detect a red card on its own — it must be told. Guard the broadcast so applying an
+    // incoming one (fromRemote) doesn't immediately re-broadcast it right back.
+    if(state.currentMatchIsOnline && !fromRemote) onlineBroadcastState('disqualify', { disqualifiedGlobalTeam: onlineGlobalTeamFor(team) });
     state.phase = 'result';
     el.controls.style.display = 'none';
     aimGroup.visible = false;
@@ -5523,7 +5545,7 @@ function bootGame(){
       for(var i=0;i<n;i++) slots.push({ team:'B', slotIdx:i, type:'empty', uid:null, name:'', difficulty:null });
       return slots;
     }
-    function createLobby(formatIdx, isPublic){
+    function createLobby(formatIdx, isPublic, terrainIdx, sceneryIdx, timedGame){
       return init().then(function(myUid){
         if(!myUid) return Promise.reject(new Error('Not signed in — check your connection'));
         var name = (state.profile && state.profile.name) || 'Player';
@@ -5539,7 +5561,8 @@ function bootGame(){
             }
             return ref.set({
               code: code, hostUid: myUid, formatIdx: formatIdx, isPublic: !!isPublic,
-              status: 'waiting', terrainIdx: 0, sceneryIdx: 0, slots: slots,
+              status: 'waiting', terrainIdx: terrainIdx||0, sceneryIdx: sceneryIdx||0,
+              timedGame: !!timedGame, slots: slots,
               createdAt: firebase.firestore.FieldValue.serverTimestamp(),
               updatedAt: firebase.firestore.FieldValue.serverTimestamp()
             }).then(function(){ return code; });
@@ -5587,11 +5610,11 @@ function bootGame(){
               if(data.slots.some(function(s){ return s.type==='empty'; })) candidate = doc.id;
             });
             if(candidate) return joinLobbyByCode(candidate);
-            return createLobby(formatIdx, true);
+            return createLobby(formatIdx, true, 0, 0, true);
           })
           .catch(function(err){
             console.error('Quick play search failed, hosting a new lobby instead', err);
-            return createLobby(formatIdx, true);
+            return createLobby(formatIdx, true, 0, 0, true);
           });
       });
     }
@@ -5770,7 +5793,11 @@ function bootGame(){
     state.onlineLobbyId = currentLobbyId;
     state.onlineLastSeq = data.turnSeq || 0;
     state.currentMatchIsOnline = true;
-    state.timedGame = false; // shot-clock desync across devices isn't handled in v1 — untimed only
+    // the shot-clock only ever counts down on whichever device is authoritative for the
+    // current turn (isHumanTurnNow() is online-authority-aware), and card violations now
+    // broadcast explicitly (see disqualifyTeamForMatch/forceHumanThrow), so timed play is safe
+    state.timedGame = !!data.timedGame;
+    state.timeLimit = 60;
     state.formatIdx = data.formatIdx || 0;
     state.players.you = []; state.players.ai = [];
     data.slots.forEach(function(s){
@@ -5787,8 +5814,33 @@ function bootGame(){
     ensureAudio();
     resetMatchState();
     state.tossWinner = onlineLocalTeamFor(data.tossWinnerGlobalTeam);
-    showToast('Online match starting!');
-    proceedToGame();
+    // the winner itself was already decided by the host before status flipped to 'active' (both
+    // devices read the same tossWinnerGlobalTeam), so this is a synced reveal, not a live call —
+    // still worth showing so the match doesn't just silently start with no toss at all
+    var winnerName = playerDisplayName(state.tossWinner, 0);
+    onlineShowCoinToss(state.tossWinner === 'you', winnerName, function(){
+      proceedToGame();
+    });
+  }
+
+  function onlineShowCoinToss(youWon, winnerName, onDone){
+    showMenuStep('step-toss');
+    el.tossStatus.textContent = 'Flipping…';
+    el.tossSub.textContent = '';
+    el.coin3d.style.transition = 'none';
+    el.coin3d.style.transform = 'rotateY(0deg)';
+    el.coin3d.classList.add('spinning');
+    setTimeout(function(){
+      el.coin3d.classList.remove('spinning');
+      el.coin3d.style.transition = 'transform 1.5s cubic-bezier(0.2,0.7,0.3,1)';
+      el.coin3d.style.transform = 'rotateY(' + (4*360 + (youWon ? 0 : 180)) + 'deg)';
+      setTimeout(function(){
+        el.tossStatus.textContent = winnerName + '’s team won the toss!';
+        el.tossSub.textContent = 'They throw first this match.';
+        playChime(youWon);
+        setTimeout(onDone, 1300);
+      }, 1600);
+    }, 1200);
   }
 
   function onlineCaptureSnapshot(){
@@ -5801,32 +5853,71 @@ function bootGame(){
       jackPos: state.jack.placed ? { x: state.jack.pos.x, z: state.jack.pos.z } : null,
       dir: state.dir,
       endNumber: state.endNumber,
-      currentTeamGlobal: onlineGlobalTeamFor(state.currentTeam)
+      currentTeamGlobal: onlineGlobalTeamFor(state.currentTeam),
+      // thrown counts are sent explicitly rather than derived from the boules list on the
+      // receiving end — a time-violation disqualification increments a team's thrown count
+      // without ever creating a real boule, which would otherwise desync the two devices'
+      // counts (and with them, whose turn advanceTurn() thinks it is next)
+      thrown: { A: state.thrown[onlineLocalTeamFor('A')]||0, B: state.thrown[onlineLocalTeamFor('B')]||0 }
     };
   }
-  function onlineBroadcastState(kind){
+  function onlineBroadcastState(kind, extra){
     if(!state.onlineLobbyId) return;
     var snap = onlineCaptureSnapshot();
     snap.kind = kind;
+    if(extra){ for(var k in extra){ snap[k] = extra[k]; } }
     var newSeq = (state.onlineLastSeq||0) + 1;
     state.onlineLastSeq = newSeq;
     Online.broadcastTurn(state.onlineLobbyId, newSeq, snap);
   }
+  // ---------- Cosmetic-only flight tweens for a remote-synced throw (see onlineApplySnapshot).
+  // The receiving device never re-simulates physics — it already has the exact final resting
+  // spot from the snapshot — so this just interpolates the mesh there over a fixed duration
+  // instead of popping it straight into place, so an opponent's throw actually reads as a throw.
+  var onlineFlightTweens = [];
+  function onlineAnimateFlight(mesh, fromPos, toPos, duration){
+    mesh.position.copy(fromPos);
+    onlineFlightTweens.push({ mesh:mesh, from:fromPos.clone(), to:toPos.clone(), duration:duration||1.1, t:0 });
+  }
+  function updateOnlineFlightTweens(dt){
+    for(var i=onlineFlightTweens.length-1;i>=0;i--){
+      var tw = onlineFlightTweens[i];
+      tw.t += dt;
+      var frac = Math.min(1, tw.t/tw.duration);
+      tw.mesh.position.x = tw.from.x + (tw.to.x-tw.from.x)*frac;
+      tw.mesh.position.z = tw.from.z + (tw.to.z-tw.from.z)*frac;
+      tw.mesh.position.y = tw.from.y + (tw.to.y-tw.from.y)*frac + Math.sin(frac*Math.PI)*1.6;
+      if(frac >= 1){
+        tw.mesh.position.copy(tw.to);
+        onlineFlightTweens.splice(i,1);
+      }
+    }
+  }
   function onlineApplySnapshot(snapshot){
     if(!snapshot) return;
+    if(snapshot.kind === 'disqualify'){
+      disqualifyTeamForMatch(onlineLocalTeamFor(snapshot.disqualifiedGlobalTeam), true);
+      return;
+    }
     if(el.result.style.display !== 'none') el.result.style.display = 'none';
+    var previousBouleCount = state.boules.length;
+    var flightOrigin = new THREE.Vector3(0, BOULE_R, snapshot.dir*state.circleDist);
     state.boules.forEach(function(b){ if(b.mesh && b.mesh.parent) scene.remove(b.mesh); });
     state.boules = [];
     state.thrown = { you:0, ai:0 };
     state.thrownByPlayer = { you:[0,0,0], ai:[0,0,0] };
-    (snapshot.boules||[]).forEach(function(sb){
+    (snapshot.boules||[]).forEach(function(sb, idx){
       var localTeam = onlineLocalTeamFor(sb.globalTeam);
       var meshObj;
       if(sb.out){
         meshObj = { position: new THREE.Vector3(sb.x, sb.y, sb.z) };
       } else {
         meshObj = makeBouleMesh(localTeam);
-        meshObj.position.set(sb.x, sb.y, sb.z);
+        if(idx >= previousBouleCount){
+          onlineAnimateFlight(meshObj, flightOrigin, new THREE.Vector3(sb.x, sb.y, sb.z), 1.1);
+        } else {
+          meshObj.position.set(sb.x, sb.y, sb.z);
+        }
       }
       state.boules.push({
         mesh: meshObj, team: localTeam, _id: nextBouleId++, ownerName:'', mode: sb.mode||'point',
@@ -5836,11 +5927,22 @@ function bootGame(){
       });
       state.thrown[localTeam]++;
     });
+    // override the derived counts with the authoritative device's explicit ones — a time-
+    // violation disqualified throw bumps a team's count without a real boule to derive it from
+    if(snapshot.thrown){
+      state.thrown.you = snapshot.thrown[onlineGlobalTeamFor('you')] || 0;
+      state.thrown.ai = snapshot.thrown[onlineGlobalTeamFor('ai')] || 0;
+    }
     state.jack.placed = !!snapshot.jackPlaced;
     if(snapshot.jackPlaced){
-      state.jack.pos.set(snapshot.jackPos.x, JACK_R, snapshot.jackPos.z);
-      jackMesh.position.copy(state.jack.pos);
+      var newJackPos = new THREE.Vector3(snapshot.jackPos.x, JACK_R, snapshot.jackPos.z);
+      state.jack.pos.copy(newJackPos);
       jackMesh.visible = true;
+      if(snapshot.kind === 'jack'){
+        onlineAnimateFlight(jackMesh, flightOrigin, newJackPos, 0.9);
+      } else {
+        jackMesh.position.copy(newJackPos);
+      }
     } else {
       jackMesh.visible = false;
     }
@@ -5974,6 +6076,38 @@ function bootGame(){
     });
   }
 
+  function renderOnlineTerrainGrid(){
+    el.onlineTerrainGrid.innerHTML = '';
+    TERRAINS.forEach(function(t, idx){
+      var btn = document.createElement('button');
+      btn.className = 'option-card' + (idx === (state.onlineTerrainIdx||0) ? ' selected' : '');
+      btn.innerHTML = '<div class="terrain-swatch" style="background:'+t.swatch+';"></div>'+
+        '<div><div class="opt-title">'+t.name+'</div><div class="opt-desc">'+t.desc+'</div></div>';
+      btn.addEventListener('click', function(){
+        playClick();
+        state.onlineTerrainIdx = idx;
+        renderOnlineTerrainGrid();
+      });
+      el.onlineTerrainGrid.appendChild(btn);
+    });
+  }
+
+  function renderOnlineSceneryGrid(){
+    el.onlineSceneryGrid.innerHTML = '';
+    SCENERY.forEach(function(loc, idx){
+      var btn = document.createElement('button');
+      btn.className = 'option-card' + (idx === (state.onlineSceneryIdx||0) ? ' selected' : '');
+      btn.innerHTML = '<div class="scenery-swatch">'+loc.icon+'</div>'+
+        '<div><div class="opt-title">'+loc.name+'</div><div class="opt-desc">'+loc.desc+'</div></div>';
+      btn.addEventListener('click', function(){
+        playClick();
+        state.onlineSceneryIdx = idx;
+        renderOnlineSceneryGrid();
+      });
+      el.onlineSceneryGrid.appendChild(btn);
+    });
+  }
+
   el.onlineHomeBackBtn.addEventListener('click', function(){ playClick(); showMenuStep('step-title'); });
   el.onlineQuickplayBtn.addEventListener('click', function(){
     playClick();
@@ -5985,12 +6119,17 @@ function bootGame(){
   el.onlineCreateBtn.addEventListener('click', function(){
     playClick();
     renderOnlineFormatGrid();
+    renderOnlineTerrainGrid();
+    renderOnlineSceneryGrid();
     showMenuStep('step-online-create');
   });
   el.onlineCreateBackBtn.addEventListener('click', function(){ playClick(); showMenuStep('step-online-home'); });
   el.onlineCreateConfirmBtn.addEventListener('click', function(){
     playClick();
-    Online.createLobby(state.onlineFormatIdx || 0, el.onlinePublicCheckbox.checked).then(function(code){
+    Online.createLobby(
+      state.onlineFormatIdx || 0, el.onlinePublicCheckbox.checked,
+      state.onlineTerrainIdx || 0, state.onlineSceneryIdx || 0, el.onlineTimedCheckbox.checked
+    ).then(function(code){
       enterLobby(code);
     }).catch(function(err){ showToast(err.message || 'Could not create a lobby'); });
   });
@@ -6497,6 +6636,23 @@ function bootGame(){
     state.spinAmount = spinFor(mode);
     state.spinSideAmount = 0;
     updateSpinLabel();
+    // Point always defaults back to the jack; shoot should default to the opponent's closest
+    // boule (the one currently winning the point, same target the CPU picks) rather than
+    // leaving whatever was last aimed at — nobody wants to manually re-tap a target boule every
+    // single time they switch modes.
+    if(mode==='shoot'){
+      var opponent = state.currentTeam==='you' ? 'ai' : 'you';
+      var target = closestBouleOfTeam(opponent);
+      if(target){
+        state.targetPos.x = target.mesh.position.x;
+        state.targetPos.z = target.mesh.position.z;
+        updateAimFromTarget();
+      }
+    } else if(state.jack.placed){
+      state.targetPos.x = state.jack.pos.x;
+      state.targetPos.z = state.jack.pos.z;
+      updateAimFromTarget();
+    }
     autoSetArcForTarget();
   }
   el.modePoint.addEventListener('click', function(){ playClick(); setThrowMode('point'); });
@@ -6776,6 +6932,7 @@ function bootGame(){
     if(state.phase==='flying' || state.phase==='settling'){
       stepPhysics(dt);
     }
+    if(onlineFlightTweens.length) updateOnlineFlightTweens(dt);
     updateParticles(dt);
     updateHighlightRing(dt);
     legendUpdateTimer += dt;
