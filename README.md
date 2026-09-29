@@ -230,3 +230,9 @@ since Kenney's work is free and excellent.
 - Practice drills (`startPracticeDrill`) reuse the real match state machine
   via an early-return interception in `advanceTurn()` — grep
   `state.practiceMode` for every touchpoint before refactoring turn logic.
+- **Order of play when nobody holds the point** (no boules on the terrain, or the
+  two closest are within `TIE_EPSILON`) follows FIPJP Art. 16/29 via
+  `undecidedPointNextTeam()`: if the first boule of the end went out the opponent
+  plays, otherwise the team that played last plays again, then it alternates.
+  An exact tie with no boules left is a dead end (no points). Online snapshots
+  carry `lastThrowTeamGlobal`/`undecidedAlternating` so both devices agree.

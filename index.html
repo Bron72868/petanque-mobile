@@ -1181,6 +1181,7 @@ function bootGame(){
   var JACK_MIN_DIST = 6;    // FIPJP-style minimum throw distance, in meters
   var JACK_MAX_DIST = 10;   // maximum throw distance
   var JACK_END_CLEARANCE = 0.5; // minimum gap from the short end boundary the jack is thrown toward
+  var TIE_EPSILON = 0.01;   // boules within 1cm of each other (to the jack) count as equidistant
   var BOARD_GAP = 0.14;     // gap between the boundary string and the inner face of the boards
   var BOARD_THICK = 0.06;
   var BOARD_H = 0.16;
@@ -2849,7 +2850,7 @@ function bootGame(){
     camOrbit: { yaw: 0, pitch: 0, zoom: 1 },
     camPresetIdx: 0,
     showRangeZone: false,
-    tieBreakActive: false, tieBreakTeam: null, lastThrowTeam: null,
+    undecidedAlternating: false, lastThrowTeam: null,
     circleDist: THROW_Z, jackThrownByTeam: null,
     practiceMode: false, practiceDrillIdx: 0,
     tournament: null, // { id, roundIdx } while playing through a tournament, else null
@@ -3284,11 +3285,6 @@ function bootGame(){
       ensurePlayerSlot(team, i);
       if(state.thrownByPlayer[team][i] < boulesPerPlayer) eligible.push(i);
     }
-    // A tie-break extra throw happens after everyone on the team has already used their
-    // normal allocation, by definition — so the usual cap doesn't apply for this one throw.
-    if(eligible.length === 0 && state.tieBreakActive && state.tieBreakTeam === team){
-      for(var j=0;j<n;j++) eligible.push(j);
-    }
     return eligible;
   }
   // CPU captain's default pick: whichever eligible teammate has thrown the fewest boules so
@@ -3546,8 +3542,7 @@ function bootGame(){
     state.boules = [];
     state.thrown = { you:0, ai:0 };
     state.thrownByPlayer = { you:[0,0,0], ai:[0,0,0] };
-    state.tieBreakActive = false;
-    state.tieBreakTeam = null;
+    state.undecidedAlternating = false;
     state.lastThrowTeam = null;
     state.jack.placed = false;
     state.jackResting = true;
@@ -3869,9 +3864,9 @@ function bootGame(){
     handleJackFoul(reason);
   }
 
-  // Only one throw per team for the jack. A failed throw immediately hands placement to
-  // the other team — they don't get their own throw attempt either, they just place it and
-  // throw first from there.
+  // Only one throw per team for the jack (FIPJP Art. 7). A failed throw hands the jack to the
+  // other team, who place it by hand in a valid position — but the team that lost the jack
+  // still plays the first boule.
   function handleJackFoul(reason){
     var team = state.jackAttempts.team;
     var otherTeam = team==='you' ? 'ai' : 'you';
@@ -3881,9 +3876,10 @@ function bootGame(){
     state.jack.pos.set(0, JACK_R, state.dir*(state.circleDist - safeDist));
     jackMesh.position.copy(state.jack.pos);
     state.jack.placed = true;
-    state.currentTeam = otherTeam;
+    state.currentTeam = team;
     var otherName = otherTeam==='you' ? 'You' : aiLabel();
-    showToast(reason + ' \u2014 ' + otherName + ' place' + (otherTeam==='you'?'':'s') + ' the jack and throw' + (otherTeam==='you'?'':'s') + ' first');
+    var teamName = team==='you' ? 'you' : aiLabel();
+    showToast(reason + ' \u2014 ' + otherName + ' place' + (otherTeam==='you'?'':'s') + ' the jack, ' + teamName + ' still throw' + (team==='you'?'':'s') + ' first');
     state.camMode = 'aim';
     if(state.currentMatchIsOnline) onlineBroadcastState('jack');
     beginTurn();
@@ -4124,6 +4120,7 @@ function bootGame(){
       } else {
         state.thrown[team]++;
         state.thrownByPlayer[team][state.activePlayerIdx[team]]++;
+        state.lastThrowTeam = team;
         updateScoreboard();
         // no real boule was ever thrown here, just a thrown-count bump — broadcast explicitly
         // or the other device's derived thrown count silently falls out of sync
@@ -4686,9 +4683,14 @@ function bootGame(){
     if(youLeft>0 && aiLeft>0){
       var bestYou = bestDistance('you');
       var bestAi = bestDistance('ai');
-      if(bestYou === null) nextTeam = 'you';
-      else if(bestAi === null) nextTeam = 'ai';
-      else nextTeam = (bestYou > bestAi) ? 'you' : (bestAi > bestYou ? 'ai' : (state.currentTeam==='you'?'ai':'you'));
+      if(bestYou !== null && bestAi === null){ nextTeam = 'ai'; state.undecidedAlternating = false; }
+      else if(bestAi !== null && bestYou === null){ nextTeam = 'you'; state.undecidedAlternating = false; }
+      else if(bestYou !== null && Math.abs(bestYou - bestAi) > TIE_EPSILON){
+        nextTeam = bestYou > bestAi ? 'you' : 'ai';
+        state.undecidedAlternating = false;
+      } else {
+        nextTeam = undecidedPointNextTeam(bestYou === null);
+      }
     } else if(youLeft>0){
       nextTeam = 'you';
     } else {
@@ -4697,6 +4699,19 @@ function bootGame(){
     state.currentTeam = nextTeam;
     state.camMode = 'aim';
     beginTurn();
+  }
+
+  // Nobody holds the point: either no boules are on the terrain, or the two closest are
+  // equidistant. FIPJP Art. 16/29: if the very first boule of the end went out, the opponent
+  // plays; otherwise the team that played last plays again. Either way it then alternates
+  // until one team holds the point.
+  function undecidedPointNextTeam(noBoulesInPlay){
+    var last = state.lastThrowTeam || state.currentTeam;
+    var other = last==='you' ? 'ai' : 'you';
+    if(state.undecidedAlternating) return other;
+    state.undecidedAlternating = true;
+    var firstBouleWentOut = noBoulesInPlay && (state.thrown.you + state.thrown.ai) === 1;
+    return firstBouleWentOut ? other : last;
   }
 
   function bestDistance(team){
@@ -4740,24 +4755,9 @@ function bootGame(){
     var youDists = state.boules.filter(function(b){return b.team==='you' && !b.out;}).map(function(b){return distToJack(b.mesh.position);}).sort(function(a,b){return a-b;});
     var aiDists = state.boules.filter(function(b){return b.team==='ai' && !b.out;}).map(function(b){return distToJack(b.mesh.position);}).sort(function(a,b){return a-b;});
 
-    // A genuine measuring tie (both closest boules equidistant, within a realistic
-    // measuring tolerance): the team that threw the boule which caused the tie must throw
-    // again to try to break it. If it's still tied after that, it alternates to the other
-    // team, and so on until someone breaks it — matches official FIPJP tie-break handling.
-    var TIE_EPSILON = 0.01; // 1cm
-    if(youDists.length>0 && aiDists.length>0 && Math.abs(youDists[0]-aiDists[0]) <= TIE_EPSILON){
-      var tieTeam = state.tieBreakActive
-        ? (state.tieBreakTeam==='you' ? 'ai' : 'you')
-        : (state.lastThrowTeam || state.currentTeam);
-      state.tieBreakActive = true;
-      state.tieBreakTeam = tieTeam;
-      state.currentTeam = tieTeam;
-      var tieTeamLabel = tieTeam==='you' ? 'Your team' : (aiLabel()+'\u2019s team');
-      showToast('Exact tie! ' + tieTeamLabel + ' throws again to break it');
-      beginTurn();
-      return;
-    }
-    state.tieBreakActive = false;
+    // Closest boules of both teams equidistant with nothing left to play: FIPJP Art. 29 makes
+    // the end dead — no points, and the jack stays with whoever scored the previous end.
+    var deadEnd = youDists.length>0 && aiDists.length>0 && Math.abs(youDists[0]-aiDists[0]) <= TIE_EPSILON;
 
     // stats: a point-mode throw is "successful" if it beats the opponent's best boule
     var youBest = youDists.length ? youDists[0] : Infinity;
@@ -4775,7 +4775,7 @@ function bootGame(){
     state.camMode = 'result';
 
     var youPts=0, aiPts=0, winner=null;
-    if(youDists.length===0 && aiDists.length===0){
+    if(deadEnd || (youDists.length===0 && aiDists.length===0)){
       winner = 'tie';
     } else if(youDists.length===0){
       aiPts = aiDists.length; winner='ai';
@@ -4784,12 +4784,12 @@ function bootGame(){
     } else if(youDists[0] < aiDists[0]){
       winner = 'you';
       for(var i=0;i<youDists.length;i++){
-        if(youDists[i] < aiDists[0]) youPts++; else break;
+        if(aiDists[0] - youDists[i] > TIE_EPSILON) youPts++; else break;
       }
     } else {
       winner = 'ai';
       for(var j=0;j<aiDists.length;j++){
-        if(aiDists[j] < youDists[0]) aiPts++; else break;
+        if(youDists[0] - aiDists[j] > TIE_EPSILON) aiPts++; else break;
       }
     }
 
@@ -4828,7 +4828,7 @@ function bootGame(){
         el.resultTitle.innerHTML = aiLabel() + ' wins <em style="font-style:italic;color:var(--terracotta)">end ' + state.endNumber + '</em>';
         el.resultDetail.textContent = '+' + aiPts + ' point' + (aiPts===1?'':'s') + ' for them. Match score: ' + state.matchScore.you + '\u2013' + state.matchScore.ai + '.';
       } else {
-        el.resultTitle.textContent = 'No boules landed in play';
+        el.resultTitle.textContent = deadEnd ? 'Dead end \u2014 exact tie' : 'No boules landed in play';
         el.resultDetail.textContent = 'Nothing scored this end. Match score stays ' + state.matchScore.you + '\u2013' + state.matchScore.ai + '.';
       }
     } else {
@@ -4849,7 +4849,7 @@ function bootGame(){
         el.resultTitle.innerHTML = aiLabel() + ' wins the <em style="font-style:italic;color:var(--terracotta)">match</em>';
         el.resultDetail.textContent = 'Final score ' + state.matchScore.you + '\u2013' + state.matchScore.ai + '.';
       } else {
-        el.resultTitle.textContent = 'No boules landed in play';
+        el.resultTitle.textContent = deadEnd ? 'Dead end \u2014 exact tie' : 'No boules landed in play';
         el.resultDetail.textContent = 'Nothing to score \u2014 let\u2019s try that again.';
       }
     }
@@ -5415,9 +5415,19 @@ function bootGame(){
     if(e.code==='ArrowRight'){ state.keys.right = true; }
     if(e.code==='ArrowUp'){ state.keys.up = true; }
     if(e.code==='ArrowDown'){ state.keys.down = true; }
-    if(e.code==='Space'){ e.preventDefault(); doThrow(); }
+    if(e.code==='Space'){
+      var tag = e.target && e.target.tagName;
+      if(tag==='INPUT' || tag==='TEXTAREA') return; // let a space be typed into the name field
+      e.preventDefault();
+      // If the Throw button still has focus from an earlier click, the browser fires a
+      // synthetic click on it when Space is released — a second doThrow() that would lock
+      // power the instant the power phase started. Drop focus so one press = one action.
+      if(document.activeElement && document.activeElement.tagName==='BUTTON') document.activeElement.blur();
+      doThrow();
+    }
   });
   window.addEventListener('keyup', function(e){
+    if(e.code==='Space' && !(e.target && (e.target.tagName==='INPUT' || e.target.tagName==='TEXTAREA'))) e.preventDefault();
     if(e.code==='ArrowLeft'){ state.keys.left = false; }
     if(e.code==='ArrowRight'){ state.keys.right = false; }
     if(e.code==='ArrowUp'){ state.keys.up = false; }
@@ -5854,6 +5864,10 @@ function bootGame(){
       dir: state.dir,
       endNumber: state.endNumber,
       currentTeamGlobal: onlineGlobalTeamFor(state.currentTeam),
+      // advanceTurn() on the receiving device needs these to pick the same next team when
+      // nobody holds the point (see undecidedPointNextTeam)
+      lastThrowTeamGlobal: state.lastThrowTeam ? onlineGlobalTeamFor(state.lastThrowTeam) : null,
+      undecidedAlternating: !!state.undecidedAlternating,
       // thrown counts are sent explicitly rather than derived from the boules list on the
       // receiving end — a time-violation disqualification increments a team's thrown count
       // without ever creating a real boule, which would otherwise desync the two devices'
@@ -5950,6 +5964,8 @@ function bootGame(){
     state.throwingJack = false;
     state.dir = snapshot.dir;
     state.endNumber = snapshot.endNumber;
+    state.lastThrowTeam = snapshot.lastThrowTeamGlobal ? onlineLocalTeamFor(snapshot.lastThrowTeamGlobal) : null;
+    state.undecidedAlternating = !!snapshot.undecidedAlternating;
     state.camMode = 'aim';
     updateScoreboard();
     renderLegend();
@@ -6356,7 +6372,7 @@ function bootGame(){
     state.boules = [];
     state.thrown = { you:0, ai:0 };
     state.thrownByPlayer = { you:[0,0,0], ai:[0,0,0] };
-    state.tieBreakActive = false;
+    state.undecidedAlternating = false;
     state.dir = 1;
     applyCircleDist(THROW_Z);
     state.currentTeam = 'you';
